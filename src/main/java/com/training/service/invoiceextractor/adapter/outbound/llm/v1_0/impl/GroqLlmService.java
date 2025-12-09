@@ -67,6 +67,8 @@ public class GroqLlmService implements ILlmExtractionService {
                 String prompt = buildExtractionPrompt(ocrText);
                 String requestBody = buildRequestBody(prompt);
 
+                log.debug("Groq API Request Body: {}", requestBody);
+
                 Request request = new Request.Builder()
                         .url(GROQ_API_URL)
                         .header("Authorization", "Bearer " + apiKey)
@@ -76,7 +78,8 @@ public class GroqLlmService implements ILlmExtractionService {
 
                 try (Response response = httpClient.newCall(request).execute()) {
                     if (!response.isSuccessful()) {
-                        log.error("Groq API error: {} - {}", response.code(), response.message());
+                        String errorBody = response.body() != null ? response.body().string() : "No error body";
+                        log.error("Groq API error: {} - {} - Body: {}", response.code(), response.message(), errorBody);
                         return createDefaultInvoiceData();
                     }
 
