@@ -114,7 +114,7 @@ public class TesseractOcrService implements IOcrService {
         tesseract.setDatapath(tesseractDataPath);
         tesseract.setLanguage(tesseractLanguage);
         tesseract.setOcrEngineMode(1); // LSTM OCR Engine Mode
-        tesseract.setPageSegMode(1);   // Automatic page segmentation with OSD
+        tesseract.setPageSegMode(3);   // Fully automatic page segmentation (no OSD)
 
         log.debug("Tesseract configured: datapath={}, language={}", tesseractDataPath, tesseractLanguage);
         return tesseract;

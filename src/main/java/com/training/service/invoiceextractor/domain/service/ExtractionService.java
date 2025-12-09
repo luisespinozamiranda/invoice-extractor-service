@@ -85,8 +85,11 @@ public class ExtractionService implements IExtractionService {
                         extractionDataJson // JSON-formatted extraction data
                 );
 
-                // Save completed metadata
-                return extractionMetadataRepositoryService.save(completedMetadata).join();
+                // Update completed metadata (don't insert again - use existing extraction_key)
+                return extractionMetadataRepositoryService.update(
+                        initialMetadata.extractionKey(),
+                        completedMetadata
+                ).join();
 
             } catch (Exception ex) {
                 log.error("Error during extraction: {}", fileName, ex);
