@@ -10,9 +10,9 @@ services:
     container_name: invoice-extractor-api
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      SPRING_DATASOURCE_URL: jdbc:postgresql://dpg-d4pfk8khg0os73ar3c70-a.virginia-postgres.render.com/postgresql_invoice_service
-      SPRING_DATASOURCE_USERNAME: lespinoza
-      SPRING_DATASOURCE_PASSWORD: q79wfvFfHxhdL36pWB0D4iSCRriuygt1
+      DATASOURCE_URL: jdbc:postgresql://dpg-d4pfk8khg0os73ar3c70-a.virginia-postgres.render.com/postgresql_invoice_service
+      DATASOURCE_USERNAME: lespinoza
+      DATASOURCE_PASSWORD: q79wfvFfHxhdL36pWB0D4iSCRriuygt1
       TESSDATA_PREFIX: /usr/share/tessdata
       UPLOAD_DIRECTORY: /app/uploads
     ports:
