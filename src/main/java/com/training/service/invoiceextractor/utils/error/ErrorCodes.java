@@ -17,8 +17,10 @@ import org.springframework.http.HttpStatus;
 public enum ErrorCodes {
     // File validation errors (400 Bad Request)
     INVALID_FILE_TYPE("INV-001", "Invalid file type provided. Accepted types: PDF, PNG, JPG, JPEG", HttpStatus.BAD_REQUEST),
+    INVALID_FILE_FORMAT("INV-001", "Invalid file format or corrupted file", HttpStatus.BAD_REQUEST),
     FILE_TOO_LARGE("INV-002", "File size exceeds maximum limit of 10 MB", HttpStatus.BAD_REQUEST),
     FILE_NOT_READABLE("INV-003", "The uploaded file could not be read or is corrupted", HttpStatus.BAD_REQUEST),
+    FILE_NOT_FOUND("INV-015", "Stored file not found", HttpStatus.NOT_FOUND),
 
     // OCR errors
     OCR_SERVICE_UNAVAILABLE("INV-004", "OCR service is currently unavailable", HttpStatus.SERVICE_UNAVAILABLE),

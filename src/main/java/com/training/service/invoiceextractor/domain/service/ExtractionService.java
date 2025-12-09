@@ -2,6 +2,8 @@ package com.training.service.invoiceextractor.domain.service;
 
 import com.training.service.invoiceextractor.adapter.outbound.database.v1_0.repository.IExtractionMetadataRepositoryService;
 import com.training.service.invoiceextractor.adapter.outbound.database.v1_0.repository.IInvoiceRepositoryService;
+import com.training.service.invoiceextractor.adapter.outbound.ocr.v1_0.IOcrService;
+import com.training.service.invoiceextractor.adapter.outbound.ocr.v1_0.OcrResult;
 import com.training.service.invoiceextractor.domain.model.ExtractionMetadataModel;
 import com.training.service.invoiceextractor.domain.model.InvoiceModel;
 import com.training.service.invoiceextractor.utils.error.ErrorCodes;
@@ -29,6 +31,7 @@ public class ExtractionService implements IExtractionService {
 
     private final IInvoiceRepositoryService invoiceRepositoryService;
     private final IExtractionMetadataRepositoryService extractionMetadataRepositoryService;
+    private final IOcrService ocrService;
 
     // Regex patterns for invoice field extraction
     private static final Pattern INVOICE_NUMBER_PATTERN = Pattern.compile("(?i)invoice\\s*#?:?\\s*([A-Z0-9-]+)", Pattern.MULTILINE);
@@ -51,9 +54,17 @@ public class ExtractionService implements IExtractionService {
                 // Save initial processing state
                 extractionMetadataRepositoryService.save(initialMetadata).join();
 
-                // TODO: Integrate with Tesseract OCR adapter to extract text from fileData
-                // For now, we'll simulate extraction with placeholder data
-                String extractedText = simulateOcrExtraction(fileName);
+                // Extract text using OCR adapter
+                OcrResult ocrResult = ocrService.extractText(fileData, fileName, fileType).join();
+
+                if (ocrResult.isEmpty()) {
+                    throw new InvoiceExtractorServiceException(
+                            ErrorCodes.EXTRACTION_FAILED,
+                            "OCR extraction returned empty text"
+                    );
+                }
+
+                String extractedText = ocrResult.extractedText();
 
                 // Parse extracted text into invoice data
                 InvoiceModel invoice = parseInvoiceFromText(extractedText, fileName);
@@ -61,16 +72,13 @@ public class ExtractionService implements IExtractionService {
                 // Save the invoice
                 InvoiceModel savedInvoice = invoiceRepositoryService.save(invoice).join();
 
-                // Calculate confidence score (simplified - would be from OCR engine)
-                double confidenceScore = calculateConfidenceScore(extractedText);
-
                 // Create completed extraction metadata
                 ExtractionMetadataModel completedMetadata = ExtractionMetadataModel.createCompleted(
                         initialMetadata.extractionKey(),
                         savedInvoice.invoiceKey(),
                         fileName,
-                        confidenceScore,
-                        "Tesseract 5.x", // OCR engine
+                        ocrResult.confidenceScore(),
+                        ocrResult.engineVersion(),
                         extractedText // Raw extraction data
                 );
 
@@ -106,7 +114,7 @@ public class ExtractionService implements IExtractionService {
                     log.error("Error getting extraction metadata: {}", extractionKey, ex);
                     throw new InvoiceExtractorServiceException(
                             ErrorCodes.EXTRACTION_NOT_FOUND,
-                            extractionKey.toString()
+                            "Extraction metadata not found with key: " + extractionKey
                     );
                 });
     }
@@ -148,14 +156,24 @@ public class ExtractionService implements IExtractionService {
                     if (metadata == null) {
                         throw new InvoiceExtractorServiceException(
                                 ErrorCodes.EXTRACTION_NOT_FOUND,
-                                extractionKey.toString()
+                                "Extraction metadata not found with key: " + extractionKey
                         );
                     }
 
-                    // TODO: Re-extract from original file if available
-                    // For now, return the existing metadata
-                    log.warn("Retry extraction not fully implemented - returning existing metadata");
-                    return CompletableFuture.completedFuture(metadata);
+                    // Mark as processing for retry
+                    log.info("Marking extraction for retry: {}", extractionKey);
+
+                    // Create new processing metadata to indicate retry is needed
+                    ExtractionMetadataModel retryMetadata = ExtractionMetadataModel.createProcessing(
+                            metadata.sourceFileName()
+                    );
+
+                    // Update the status to processing
+                    return extractionMetadataRepositoryService.save(retryMetadata)
+                            .thenApply(saved -> {
+                                log.info("Extraction marked for retry: {}", extractionKey);
+                                return saved;
+                            });
                 })
                 .exceptionally(ex -> {
                     log.error("Error retrying extraction: {}", extractionKey, ex);
@@ -164,7 +182,7 @@ public class ExtractionService implements IExtractionService {
                     }
                     throw new InvoiceExtractorServiceException(
                             ErrorCodes.EXTRACTION_FAILED,
-                            "Retry failed"
+                            "Retry failed: " + ex.getMessage()
                     );
                 });
     }
@@ -238,25 +256,6 @@ public class ExtractionService implements IExtractionService {
     }
 
     /**
-     * Simulate OCR extraction (placeholder until Tesseract integration is complete)
-     */
-    private String simulateOcrExtraction(String fileName) {
-        log.debug("Simulating OCR extraction for: {}", fileName);
-
-        // Return simulated invoice text
-        return """
-                INVOICE #INV-2024-001
-
-                Bill To: ACME Corporation
-                123 Main Street
-
-                Total Amount: $1,250.00
-
-                Date: 2024-12-08
-                """;
-    }
-
-    /**
      * Parse invoice data from extracted text using regex patterns
      */
     private InvoiceModel parseInvoiceFromText(String extractedText, String fileName) {
@@ -300,19 +299,5 @@ public class ExtractionService implements IExtractionService {
             log.warn("Failed to parse amount: {}", amountStr);
             return BigDecimal.ZERO;
         }
-    }
-
-    /**
-     * Calculate confidence score (simplified - would come from OCR engine)
-     */
-    private double calculateConfidenceScore(String extractedText) {
-        // Simple heuristic: if we found key fields, confidence is higher
-        double score = 0.5;
-
-        if (INVOICE_NUMBER_PATTERN.matcher(extractedText).find()) score += 0.2;
-        if (AMOUNT_PATTERN.matcher(extractedText).find()) score += 0.2;
-        if (CLIENT_NAME_PATTERN.matcher(extractedText).find()) score += 0.1;
-
-        return Math.min(score, 1.0);
     }
 }
