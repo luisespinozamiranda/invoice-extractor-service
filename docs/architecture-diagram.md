@@ -2,8 +2,8 @@
 
 **Project:** Invoice Extractor Service
 **Document Type:** Architecture & Interaction Diagrams
-**Version:** 1.0
-**Date:** 2025-12-08
+**Version:** 1.1
+**Date:** 2025-12-09
 
 ---
 
@@ -68,36 +68,39 @@
 │  │  └──────────────────────────────────────────┘                │   │
 │  └────────────┬───────────────────────────┬──────────────────────┘  │
 │               │                           │                          │
-│  ┌────────────▼───────────────┐  ┌───────▼──────────────────────┐  │
-│  │  OUTBOUND ADAPTER          │  │  OUTBOUND ADAPTER            │  │
-│  │  (Database)                │  │  (OCR Service)               │  │
-│  │                            │  │                              │  │
-│  │  ┌──────────────────────┐ │  │  ┌────────────────────────┐ │  │
-│  │  │ Invoice Repository   │ │  │  │ IOcrService            │ │  │
-│  │  │ Service              │ │  │  │ (Port Interface)       │ │  │
-│  │  └──────┬───────────────┘ │  │  └───────────┬────────────┘ │  │
-│  │         │                  │  │              │               │  │
-│  │  ┌──────▼───────────────┐ │  │  ┌───────────▼────────────┐ │  │
-│  │  │ JPA Repository       │ │  │  │ TesseractOcrService    │ │  │
-│  │  │ - InvoiceRepository  │ │  │  │                        │ │  │
-│  │  │ - VendorRepository   │ │  │  │  ┌──────────────────┐ │ │  │
-│  │  └──────┬───────────────┘ │  │  │  │ Invoice Data     │ │ │  │
-│  │         │                  │  │  │  │ Parser           │ │ │  │
-│  │  ┌──────▼───────────────┐ │  │  │  └──────────────────┘ │ │  │
-│  │  │ JPA Entities         │ │  │  │                        │ │  │
-│  │  │ - Invoice            │ │  │  │  ┌──────────────────┐ │ │  │
-│  │  │ - Vendor             │ │  │  │  │ Tesseract OCR    │ │ │  │
-│  │  │ - ExtractionMetadata │ │  │  │  │ Engine           │ │ │  │
-│  │  └──────────────────────┘ │  │  │  └──────────────────┘ │ │  │
-│  └────────────┬──────────────┘  │  └────────────────────────┘ │  │
-│               │                  │                              │  │
-└───────────────┼──────────────────┴──────────────────────────────┘  │
-                │                                                      │
-       ┌────────▼────────┐                                            │
-       │  PostgreSQL     │◄───────────────────────────────────────────┘
-       │  Database       │
-       │  (Render.com)   │
-       └─────────────────┘
+│  ┌─────────┬──────────────┬──────────────────────┬──────────────┐  │
+│           │              │                      │              │  │
+│  ┌────────▼───────┐ ┌───▼──────────┐ ┌────────▼─────────┐ ┌─▼────┐│
+│  │  DATABASE      │ │  LLM ADAPTER │ │  OCR ADAPTER     │ │ ...  ││
+│  │  ADAPTER       │ │  (Outbound)  │ │  (Outbound)      │ │      ││
+│  │  (Outbound)    │ │              │ │                  │ │      ││
+│  │ ┌────────────┐ │ │ ┌──────────┐ │ │ ┌──────────────┐ │ │      ││
+│  │ │Repository  │ │ │ │ILlmExtract│ │ │ │IOcrService   │ │ │      ││
+│  │ │Service     │ │ │ │Service    │ │ │ │(Port)        │ │ │      ││
+│  │ └─────┬──────┘ │ │ │(Port)     │ │ │ └──────┬───────┘ │ │      ││
+│  │       │        │ │ └─────┬─────┘ │ │        │         │ │      ││
+│  │ ┌─────▼──────┐ │ │ ┌─────▼─────┐ │ │ ┌──────▼───────┐ │ │      ││
+│  │ │JPA Repo    │ │ │ │GroqLlm    │ │ │ │Tesseract     │ │ │      ││
+│  │ │- Invoice   │ │ │ │Service    │ │ │ │OcrService    │ │ │      ││
+│  │ │- Vendor    │ │ │ │(Adapter)  │ │ │ │              │ │ │      ││
+│  │ └─────┬──────┘ │ │ └─────┬─────┘ │ │ │┌────────────┐│ │ │      ││
+│  │       │        │ │       │       │ │ ││Invoice Data││ │ │      ││
+│  │ ┌─────▼──────┐ │ │       │       │ │ ││Parser      ││ │ │      ││
+│  │ │JPA Entity  │ │ │       │       │ │ │└────────────┘│ │ │      ││
+│  │ │- Invoice   │ │ │       │       │ │ │┌────────────┐│ │ │      ││
+│  │ │- Vendor    │ │ │       │       │ │ ││Tesseract   ││ │ │      ││
+│  │ │- Extract   │ │ │       │       │ │ ││OCR Engine  ││ │ │      ││
+│  │ │  Metadata  │ │ │       │       │ │ │└────────────┘│ │ │      ││
+│  │ └────────────┘ │ │       │       │ │ └──────────────┘ │ │      ││
+│  └────────┬───────┘ └───────┼───────┘ └────────┬─────────┘ └──────┘│
+│           │                 │                  │                    │
+└───────────┼─────────────────┼──────────────────┼────────────────────┘
+            │                 │                  │
+   ┌────────▼────────┐ ┌──────▼──────┐  ┌───────▼──────┐
+   │  PostgreSQL     │ │  Groq API   │  │  Tesseract   │
+   │  Database       │ │  (Llama 3.1)│  │  OCR Engine  │
+   │  (Render.com)   │ │  Free Tier  │  │              │
+   └─────────────────┘ └─────────────┘  └──────────────┘
 ```
 
 ---
@@ -143,14 +146,22 @@
      │                   │                    │                    │ 10. Tesseract.doOCR│
      │                   │                    │                    │     (extract text) │
      │                   │                    │                    │                    │
-     │                   │                    │                    │ 11. Parse Text     │
-     │                   │                    │                    │     (regex patterns)│
-     │                   │                    │                    │                    │
-     │                   │                    │ 12. Return Result  │                    │
+     │                   │                    │ 11. Return OCR Text│                    │
      │                   │                    │<───────────────────│                    │
-     │                   │                    │  InvoiceExtractionResult                │
+     │                   │                    │  OcrResult         │                    │
      │                   │                    │                    │                    │
-     │                   │                    │ 13. InvoiceService.createInvoice()      │
+     │                   │                    │ 12. Call LLM Service (Groq API)         │
+     │                   │                    │    extractInvoiceData(ocrText)          │
+     │                   │                    │                    │                    │
+     │                   │                    │                    │ 13. Groq API Call  │
+     │                   │                    │                    │    Llama 3.1 70B   │
+     │                   │                    │                    │    (JSON Mode)     │
+     │                   │                    │                    │                    │
+     │                   │                    │ 14. Return InvoiceData                  │
+     │                   │                    │    (with Optional fields)               │
+     │                   │                    │    OR fallback to regex                 │
+     │                   │                    │                    │                    │
+     │                   │                    │ 15. InvoiceService.createInvoice()      │
      │                   │                    │                    │                    │
      │                   │                    │ 14. RepositoryService                   │
      │                   │                    │     .save()        │                    │
@@ -265,7 +276,7 @@ Content-Type: application/json
 }
 ```
 
-### 3.2 Backend → OCR Service Interaction
+### 3.2 Backend → OCR & LLM Service Interaction
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -273,7 +284,7 @@ Content-Type: application/json
 └─────────────────────────────────────────────────────────────┘
 
 1. ExtractionService (Domain)
-   └─> ocrService.extractInvoiceData(fileData, fileName, fileType)
+   └─> ocrService.extractText(fileData, fileName, fileType)
        │
        ├─> TesseractOcrService (Adapter)
        │   │
@@ -281,27 +292,46 @@ Content-Type: application/json
        │   │   └─> PDDocument.load(pdfData)
        │   │       └─> PDFRenderer.renderImageWithDPI(0, 300)
        │   │
-       │   ├─> Perform OCR
-       │   │   └─> tesseract.doOCR(bufferedImage)
-       │   │       └─> Returns: String (raw text)
-       │   │
-       │   └─> Parse extracted text
-       │       └─> invoiceDataParser.parseInvoiceData(text)
-       │           │
-       │           ├─> Extract invoice number (regex)
-       │           ├─> Extract amount (regex)
-       │           ├─> Extract client name (regex)
-       │           ├─> Extract client address (text parsing)
-       │           │
-       │           └─> Returns: InvoiceExtractionResult
+       │   └─> Perform OCR
+       │       └─> tesseract.doOCR(bufferedImage)
+       │           └─> Returns: OcrResult (raw text + confidence)
        │
-       └─> Returns: CompletableFuture<InvoiceExtractionResult>
+       └─> Returns: CompletableFuture<OcrResult>
 
-2. ExtractionService continues
-   └─> invoiceService.createInvoice(invoiceModel)
-       └─> invoiceRepositoryService.save(invoiceModel)
-           └─> invoiceRepository.save(invoiceEntity)
-               └─> PostgreSQL INSERT
+2. ExtractionService continues with LLM extraction
+   └─> llmExtractionService.extractInvoiceData(ocrText)
+       │
+       ├─> GroqLlmService (Adapter)
+       │   │
+       │   ├─> Build extraction prompt (structured)
+       │   │   └─> Instructs LLM to extract fields as JSON
+       │   │
+       │   ├─> Call Groq API (HTTP POST via OkHttp)
+       │   │   └─> POST https://api.groq.com/openai/v1/chat/completions
+       │   │       ├─> Model: llama-3.1-70b-versatile
+       │   │       ├─> Temperature: 0.1 (factual)
+       │   │       └─> Response Format: json_object (forced JSON)
+       │   │
+       │   └─> Parse JSON response
+       │       └─> Extract fields: invoice_number, amount, client_name, etc.
+       │           └─> Wrap in Optional<T> (null-safe)
+       │               └─> Returns: InvoiceData (with Optionals)
+       │
+       └─> Returns: CompletableFuture<InvoiceData>
+
+       **If LLM fails or is disabled:**
+       └─> Fallback to Regex Pattern Matching
+           ├─> Extract invoice number (regex)
+           ├─> Extract amount (regex)
+           ├─> Extract client name (regex)
+           └─> Returns: InvoiceData (default values)
+
+3. ExtractionService continues
+   └─> Create InvoiceModel from InvoiceData
+       └─> Unwrap Optional fields with .orElse(defaults)
+           └─> invoiceRepositoryService.save(invoiceModel)
+               └─> invoiceRepository.save(invoiceEntity)
+                   └─> PostgreSQL INSERT
 ```
 
 ### 3.3 Backend → Database Interaction
@@ -382,26 +412,27 @@ Content-Type: application/json
         │  │  - ExtractionMetadataModel               │  │
         │  └─────────────────────────────────────────┘  │
         │                                                 │
-        └────┬─────────────────────────────────┬─────────┘
-             │                                 │
-             │ Outbound Port                   │ Outbound Port
-             │ (Repository Interface)          │ (OCR Interface)
-             │                                 │
-  ┌──────────▼──────────────┐      ┌─────────▼──────────────┐
-  │  OUTBOUND ADAPTER       │      │  OUTBOUND ADAPTER      │
-  │  (Database)             │      │  (OCR Service)         │
-  │                         │      │                        │
-  │  - Repository Services  │      │  - IOcrService         │
-  │  - JPA Repositories     │      │  - TesseractOcrService │
-  │  - Entities             │      │  - InvoiceDataParser   │
-  │  - Entity Mappers       │      │                        │
-  └─────────┬───────────────┘      └─────────┬──────────────┘
-            │                                 │
-            │                                 │
-     ┌──────▼─────────┐              ┌───────▼────────┐
-     │  PostgreSQL    │              │  Tesseract     │
-     │  Database      │              │  OCR Engine    │
-     └────────────────┘              └────────────────┘
+        └────┬─────────────────┬─────────────────┬─────────┘
+             │                 │                 │
+             │ Outbound Port   │ Outbound Port   │ Outbound Port
+             │ (Repository)    │ (LLM Interface) │ (OCR Interface)
+             │                 │                 │
+  ┌──────────▼─────────┐ ┌─────▼──────────┐ ┌──▼────────────────┐
+  │  OUTBOUND ADAPTER  │ │  OUTBOUND      │ │  OUTBOUND ADAPTER │
+  │  (Database)        │ │  ADAPTER (LLM) │ │  (OCR Service)    │
+  │                    │ │                │ │                   │
+  │  - Repository      │ │  - ILlmExtract │ │  - IOcrService    │
+  │    Services        │ │    Service     │ │  - TesseractOcr   │
+  │  - JPA Repos       │ │  - GroqLlm     │ │    Service        │
+  │  - Entities        │ │    Service     │ │                   │
+  │  - Entity Mappers  │ │  - InvoiceData │ │                   │
+  └─────────┬──────────┘ └───────┬────────┘ └─────────┬─────────┘
+            │                    │                     │
+            │                    │                     │
+     ┌──────▼────────┐  ┌────────▼─────────┐  ┌───────▼────────┐
+     │  PostgreSQL   │  │  Groq API        │  │  Tesseract     │
+     │  Database     │  │  Llama 3.1 70B   │  │  OCR Engine    │
+     └───────────────┘  └──────────────────┘  └────────────────┘
 ```
 
 **Key Principles:**
@@ -435,6 +466,11 @@ REST Layer              Spring Web MVC           3.1.2
 
 Domain Layer            Plain Java (POJOs)       17
                         Java Records             17
+
+LLM Integration         Groq API                 Free Tier
+                        Llama 3.1 70B            Latest
+                        OkHttp                   4.12.0
+                        Jackson (JSON parsing)   2.15.x
 
 OCR Integration         Tesseract OCR            5.x
                         Tess4J                   5.9.0
@@ -533,10 +569,17 @@ Database Server:
            └─> Spring Controller receives
                └─> Controller Service converts DTO
                    └─> Extraction Service orchestrates
-                       ├─> OCR Service extracts data
+                       ├─> OCR Service extracts raw text
                        │   ├─> PDF → Image conversion
                        │   ├─> Tesseract OCR
-                       │   └─> Text parsing (regex)
+                       │   └─> Returns OcrResult (text + confidence)
+                       │
+                       ├─> LLM Service extracts structured data
+                       │   ├─> Build extraction prompt
+                       │   ├─> Call Groq API (Llama 3.1 70B)
+                       │   ├─> Parse JSON response
+                       │   └─> Returns InvoiceData (Optional fields)
+                       │   └─> Fallback to regex if LLM fails
                        │
                        └─> Invoice Service saves
                            └─> Repository Service persists
@@ -550,11 +593,12 @@ Database Server:
                                                            └─> Angular displays success
 ```
 
-**Total Time:** ~30 seconds
+**Total Time:** ~30-35 seconds
 - Frontend validation: < 100ms
 - File upload: 1-2 seconds (network)
 - Backend processing: 1-2 seconds
 - OCR extraction: 20-25 seconds
+- LLM extraction: 2-5 seconds (Groq API call)
 - Database save: < 500ms
 - Response to frontend: < 500ms
 
@@ -644,8 +688,14 @@ Benefits:
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 2025-12-08
+**Document Version:** 1.1
+**Last Updated:** 2025-12-09
+**Changes in v1.1:**
+- Added LLM integration (Groq API with Llama 3.1 70B)
+- Updated extraction flow to include intelligent data extraction
+- Added Optional pattern for null-safe field handling
+- Updated architecture diagrams with LLM adapter
+
 **Related Documents:**
 - [Technical Requirements Document](technical-requirements-document.md)
 - [Backend Technical Acceptance Criteria](technical-acceptance-criteria.md)

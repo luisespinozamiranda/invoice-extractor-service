@@ -22,7 +22,7 @@
 ## 1. Overview
 
 ### Summary
-Build an end-to-end invoice extraction application using Angular (frontend), Java Spring Boot (backend), and PostgreSQL (database) that leverages AI/OCR to automatically extract structured data (invoice number, amount, client name, client address) from uploaded PDF or image files.
+Build an end-to-end invoice extraction application using Angular (frontend), Java Spring Boot (backend), and PostgreSQL (database) that leverages LLM (Groq Llama 3.1 70B) and OCR (Tesseract) to automatically extract structured data (invoice number, amount, client name, client address) from uploaded PDF or image files. The system uses intelligent LLM-based extraction with regex fallback for reliability.
 
 ### Driver
 - [x] Product/Business (Training exercise with business value demonstration)
@@ -52,8 +52,9 @@ Build an end-to-end invoice extraction application using Angular (frontend), Jav
 
 1. **Backend (Java Spring Boot)**
    - `invoice-extractor-service` - Main Spring Boot application
-   - OCR/AI integration module
-   - Invoice processing pipeline
+   - LLM integration module (Groq API adapter)
+   - OCR integration module (Tesseract)
+   - Invoice processing pipeline (with LLM-first, regex fallback)
    - REST API layer
    - Database persistence layer
 
@@ -71,7 +72,10 @@ Build an end-to-end invoice extraction application using Angular (frontend), Jav
 
 **What's IN Scope:**
 - ✅ File upload (PDF, PNG, JPG, JPEG)
-- ✅ OCR/AI extraction of 4 fields (invoice #, amount, client name, address)
+- ✅ LLM-powered intelligent extraction of 4 fields (invoice #, amount, client name, address)
+- ✅ OCR text extraction using Tesseract
+- ✅ Dual extraction strategy (LLM-first with regex fallback)
+- ✅ Optional<T> pattern for null-safe field handling
 - ✅ JSON response format
 - ✅ PostgreSQL storage of extracted data
 - ✅ Angular UI with table display
@@ -93,9 +97,10 @@ Build an end-to-end invoice extraction application using Angular (frontend), Jav
 - ❌ Advanced OCR training/customization
 
 **Stop Conditions:**
-- If OCR accuracy < 70% → Reassess OCR provider/approach
+- If LLM + OCR accuracy < 70% → Reassess extraction approach or providers
 - If processing time > 60 seconds per invoice → Optimize or use async processing
-- If scope expands beyond 6 core features → Create new TRD
+- If Groq API rate limits become problematic → Consider paid tier or alternative provider
+- If scope expands beyond 8 core features → Create new TRD
 
 ### Breaking Changes
 **Breaking Change**: No (New application, no existing API to break)
@@ -191,7 +196,8 @@ Build an end-to-end invoice extraction application using Angular (frontend), Jav
 | **CompletableFuture for Async** | Non-blocking I/O, better scalability | Synchronous (blocking), Reactive (more complex) |
 | **PostgreSQL JSONB** | Flexible schema for OCR metadata | Separate tables (more rigid), NoSQL (adds complexity) |
 | **Angular** | Required by spec, rich ecosystem | React (not specified), Vue (not specified) |
-| **Tesseract OCR** | Free, open-source, good accuracy | Google Vision ($$), AWS Textract ($$), Azure Form Recognizer ($$) |
+| **Tesseract OCR** | Free, open-source, local processing | Google Vision ($$), AWS Textract ($$), Azure Form Recognizer ($$) |
+| **Groq API (Llama 3.1 70B)** | Free, fast, intelligent extraction | OpenAI GPT-4 ($$), Claude ($$), local models (slower) |
 | **SpringDoc OpenAPI** | Auto-generates Swagger UI, Spring Boot 3 compatible | Springfox (deprecated for Boot 3) |
 
 ### Architectural Patterns

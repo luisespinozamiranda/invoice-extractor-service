@@ -2,6 +2,8 @@ package com.training.service.invoiceextractor.domain.service;
 
 import com.training.service.invoiceextractor.adapter.outbound.database.v1_0.repository.IExtractionMetadataRepositoryService;
 import com.training.service.invoiceextractor.adapter.outbound.database.v1_0.repository.IInvoiceRepositoryService;
+import com.training.service.invoiceextractor.adapter.outbound.llm.v1_0.ILlmExtractionService;
+import com.training.service.invoiceextractor.adapter.outbound.llm.v1_0.InvoiceData;
 import com.training.service.invoiceextractor.adapter.outbound.ocr.v1_0.IOcrService;
 import com.training.service.invoiceextractor.adapter.outbound.ocr.v1_0.OcrResult;
 import com.training.service.invoiceextractor.domain.model.ExtractionMetadataModel;
@@ -32,11 +34,25 @@ public class ExtractionService implements IExtractionService {
     private final IInvoiceRepositoryService invoiceRepositoryService;
     private final IExtractionMetadataRepositoryService extractionMetadataRepositoryService;
     private final IOcrService ocrService;
+    private final ILlmExtractionService llmExtractionService;
 
-    // Regex patterns for invoice field extraction
-    private static final Pattern INVOICE_NUMBER_PATTERN = Pattern.compile("(?i)invoice\\s*#?:?\\s*([A-Z0-9-]+)", Pattern.MULTILINE);
-    private static final Pattern AMOUNT_PATTERN = Pattern.compile("(?i)(?:total|amount|balance)\\s*:?\\s*\\$?([0-9,]+\\.?[0-9]*)", Pattern.MULTILINE);
-    private static final Pattern CLIENT_NAME_PATTERN = Pattern.compile("(?i)(?:bill\\s*to|client|customer)\\s*:?\\s*([A-Za-z\\s]+)", Pattern.MULTILINE);
+    // Regex patterns for invoice field extraction - optimized for real-world invoices
+    private static final Pattern INVOICE_NUMBER_PATTERN = Pattern.compile(
+            "(?i)(?:invoice|document|doc|inv)\\s*(?:#|no\\.?|number)?\\s*:?\\s*([A-Z0-9-]+)",
+            Pattern.MULTILINE
+    );
+
+    // Match invoice total with priority: "Invoice Total" > "Estimated Invoice Total" > "Total" > "Balance Due"
+    private static final Pattern AMOUNT_PATTERN = Pattern.compile(
+            "(?i)(?:estimated.*?invoice\\s+total|current\\s+invoice\\s+total|invoice\\s+total|total\\s+tax|grand\\s+total|amount\\s+due|balance\\s+due)\\s*:?\\s*\\$\\s*([0-9,]+\\.[0-9]{2})",
+            Pattern.MULTILINE
+    );
+
+    // Match client name after "Bill To:" or "Bu To:" (OCR sometimes misreads "Bill" as "Bu")
+    private static final Pattern CLIENT_NAME_PATTERN = Pattern.compile(
+            "(?i)(?:bill\\s*to|bu\\s*to|sold\\s*to|customer)\\s*:?\\s*\\n?\\s*([A-Z][A-Z0-9,\\s\\.'-]+?)(?=\\n[0-9]|\\n[A-Z]{2}\\s|$)",
+            Pattern.MULTILINE | Pattern.DOTALL
+    );
 
     @Override
     public CompletableFuture<ExtractionMetadataModel> extractAndSaveInvoice(
@@ -262,9 +278,37 @@ public class ExtractionService implements IExtractionService {
     }
 
     /**
-     * Parse invoice data from extracted text using regex patterns
+     * Parse invoice data from extracted text.
+     * Uses LLM extraction if available, falls back to regex patterns.
      */
     private InvoiceModel parseInvoiceFromText(String extractedText, String fileName) {
+        // Try LLM extraction first (more accurate for varied invoice formats)
+        if (llmExtractionService.isAvailable()) {
+            try {
+                log.debug("Using LLM for invoice data extraction");
+                InvoiceData llmData = llmExtractionService.extractInvoiceData(extractedText).join();
+
+                if (llmData.isValid()) {
+                    log.info("LLM extraction successful with confidence: {}", llmData.confidence());
+                    return InvoiceModel.create(
+                            llmData.invoiceNumber().orElse("UNKNOWN"),
+                            llmData.amount().orElse(BigDecimal.ZERO),
+                            llmData.clientName().orElse("Unknown Client"),
+                            llmData.clientAddress().orElse(null),
+                            llmData.currency(),
+                            InvoiceModel.STATUS_EXTRACTED,
+                            fileName
+                    );
+                } else {
+                    log.warn("LLM extraction returned invalid data, falling back to regex");
+                }
+            } catch (Exception ex) {
+                log.warn("LLM extraction failed, falling back to regex: {}", ex.getMessage());
+            }
+        }
+
+        // Fallback to regex-based extraction
+        log.debug("Using regex patterns for invoice data extraction");
         String invoiceNumber = extractField(extractedText, INVOICE_NUMBER_PATTERN, "UNKNOWN");
         String amountStr = extractField(extractedText, AMOUNT_PATTERN, "0.00");
         String clientName = extractField(extractedText, CLIENT_NAME_PATTERN, "Unknown Client");

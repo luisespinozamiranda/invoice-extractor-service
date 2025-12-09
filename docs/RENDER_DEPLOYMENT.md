@@ -24,6 +24,14 @@ DATASOURCE_PASSWORD=<tu-password>
 TESSDATA_PREFIX=/usr/share/tessdata
 ```
 
+### LLM Integration (Groq API)
+```bash
+LLM_ENABLED=true
+GROQ_API_KEY=<tu-groq-api-key>
+```
+
+**Obtener Groq API Key gratis**: https://console.groq.com/keys
+
 ### Almacenamiento de Archivos
 ```bash
 UPLOAD_DIRECTORY=/app/uploads
@@ -93,6 +101,8 @@ DATASOURCE_URL=jdbc:postgresql://dpg-xxxxx.virginia-postgres.render.com/postgres
 DATASOURCE_USERNAME=lespinoza
 DATASOURCE_PASSWORD=q79wfvFfHxhdL36pWB0D4iSCRriuygt1
 TESSDATA_PREFIX=/usr/share/tessdata
+LLM_ENABLED=true
+GROQ_API_KEY=<tu-groq-api-key>
 UPLOAD_DIRECTORY=/app/uploads
 ```
 
@@ -122,6 +132,8 @@ PDF Rendering DPI: 300
 Tesseract data path found: /usr/share/tessdata
 Language file found: eng.traineddata
 ========================
+
+✓ LLM extraction service is enabled and available: Groq (Llama 3.1 70B)
 ```
 
 ### 2. Probar el Health Endpoint
@@ -176,6 +188,14 @@ curl -X POST https://tu-servicio.onrender.com/invoice-extractor-service/api/v1.0
 - Verifica que `/app/uploads` tiene permisos de escritura
 - En el Dockerfile, asegúrate de: `RUN mkdir -p /app/uploads && chmod 777 /app/uploads`
 
+### Problema: "LLM extraction failed"
+
+**Solución**:
+- Verifica que `GROQ_API_KEY` esté configurada correctamente
+- Verifica que `LLM_ENABLED=true` esté configurado
+- Revisa los logs para ver el mensaje de error de Groq API
+- El servicio automáticamente fallback a regex si LLM falla
+
 ## 📊 Monitoreo
 
 ### Logs en Tiempo Real
@@ -191,7 +211,8 @@ render logs -f <service-id>
 Monitorea en Render Dashboard:
 - **CPU Usage**: Tesseract puede ser intensivo en CPU
 - **Memory Usage**: Los PDFs grandes requieren más memoria
-- **Request Duration**: La extracción OCR toma tiempo
+- **Request Duration**: La extracción OCR + LLM toma tiempo (~30-35 segundos)
+- **API Rate Limits**: Groq free tier tiene límites de requests por minuto
 
 ## 🔄 Actualizar el Servicio
 
@@ -228,17 +249,42 @@ Para producción, considera:
 - Google Cloud Storage
 - Cloudinary
 
+### LLM Configuration
+
+El servicio usa Groq API con el modelo Llama 3.1 70B para extracción inteligente:
+
+**Características**:
+- **Gratis**: Groq ofrece API gratuita (con rate limits)
+- **Rápido**: 2-5 segundos para extraer datos
+- **Preciso**: Entiende contexto y formatos variados de facturas
+- **Fallback**: Si LLM falla, usa regex automáticamente
+
+**Alternativas**:
+Si quieres cambiar de LLM provider, la arquitectura hexagonal lo permite fácilmente:
+1. Implementa `ILlmExtractionService` para tu provider
+2. Marca tu implementación con `@Service`
+3. Actualiza las variables de entorno
+
+**Desactivar LLM**:
+```bash
+LLM_ENABLED=false
+```
+El servicio usará solo patrones regex para extracción.
+
 ### Costos
 
 - Free Tier: Limitado, el servicio se duerme después de inactividad
 - Starter Plan ($7/mes): Servicio siempre activo, más recursos
 - **Recomendación**: Usar al menos Starter para OCR (CPU intensivo)
+- **Groq API**: Gratis con rate limits (suficiente para pruebas)
 
 ## 🔗 Enlaces Útiles
 
 - [Render Docs](https://render.com/docs)
 - [Tesseract GitHub](https://github.com/tesseract-ocr/tesseract)
 - [Tess4J Documentation](http://tess4j.sourceforge.net/)
+- [Groq Console](https://console.groq.com/) - Obtener API key
+- [Groq API Docs](https://console.groq.com/docs)
 
 ---
 

@@ -2,9 +2,10 @@
 
 **Project:** Invoice Extractor Service
 **Document Type:** Step-by-Step Implementation Plan
-**Version:** 1.0
-**Date:** 2025-12-08
+**Version:** 1.1
+**Date:** 2025-12-09
 **Target Completion:** December 22, 2025
+**Last Update:** Added Phase 5.5 - LLM Integration (Groq API)
 
 ---
 
@@ -12,7 +13,8 @@
 
 This document provides a detailed, step-by-step implementation plan for building the Invoice Extractor Service. Each phase is designed to be completed sequentially, with clear deliverables and verification steps.
 
-**Total Estimated Time:** 64 hours (8 working days)
+**Total Estimated Time:** 68 hours (8.5 working days)
+**Includes:** LLM integration with Groq API for intelligent invoice extraction
 
 ---
 
@@ -20,14 +22,15 @@ This document provides a detailed, step-by-step implementation plan for building
 
 ```
 Phase 1: Foundation & Database Setup        [6 hours]  ✅ COMPLETED
-Phase 2: Error Handling Infrastructure      [3 hours]  ⏳ NEXT
-Phase 3: Domain Layer Implementation        [8 hours]
-Phase 4: Database Layer (Outbound Adapter)  [10 hours]
-Phase 5: OCR Service Integration            [12 hours]
-Phase 6: REST Layer (Inbound Adapter)       [8 hours]
-Phase 7: Testing & Validation               [9 hours]
-Phase 8: Frontend Implementation            [14 hours]
-Phase 9: Integration & Deployment           [4 hours]
+Phase 2: Error Handling Infrastructure      [3 hours]  ✅ COMPLETED
+Phase 3: Domain Layer Implementation        [8 hours]  ✅ COMPLETED
+Phase 4: Database Layer (Outbound Adapter)  [10 hours] ✅ COMPLETED
+Phase 5: OCR Service Integration            [12 hours] ✅ COMPLETED
+Phase 5.5: LLM Integration (Groq API)       [4 hours]  ✅ COMPLETED
+Phase 6: REST Layer (Inbound Adapter)       [8 hours]  ✅ COMPLETED
+Phase 7: Testing & Validation               [9 hours]  ✅ COMPLETED
+Phase 8: Frontend Implementation            [14 hours] ⏳ PENDING
+Phase 9: Integration & Deployment           [4 hours]  ⏳ PENDING
 ```
 
 ---
@@ -750,6 +753,111 @@ mvn test -Dtest=TesseractOcrServiceTest
 # Expected: Parser extracts invoice fields
 # Expected: All tests pass
 ```
+
+---
+
+## Phase 5.5: LLM Integration (Groq API) ✅ COMPLETED
+
+**Status:** ✅ **COMPLETED**
+**Duration:** 4 hours
+**Goal:** Integrate Groq LLM for intelligent invoice data extraction with regex fallback
+
+### 5.5.1 Add OkHttp Dependency (15 minutes)
+
+**File:** `pom.xml`
+
+Added HTTP client for API calls:
+```xml
+<dependency>
+    <groupId>com.squareup.okhttp3</groupId>
+    <artifactId>okhttp</artifactId>
+    <version>4.12.0</version>
+</dependency>
+```
+
+### 5.5.2 Create InvoiceData DTO with Optional Pattern (45 minutes)
+
+**File:** `InvoiceData.java`
+
+Created DTO using Optional<T> for null-safe field handling:
+- Optional<String> invoiceNumber
+- Optional<BigDecimal> amount
+- Optional<String> clientName
+- Optional<String> clientAddress
+- Static factory method with null filtering
+- isValid() method for data validation
+
+### 5.5.3 Create ILlmExtractionService Port Interface (30 minutes)
+
+**File:** `ILlmExtractionService.java`
+
+Provider-agnostic interface:
+```java
+public interface ILlmExtractionService {
+    CompletableFuture<InvoiceData> extractInvoiceData(String ocrText);
+    boolean isAvailable();
+    String getProviderName();
+}
+```
+
+### 5.5.4 Implement GroqLlmService Adapter (2 hours)
+
+**File:** `GroqLlmService.java`
+
+Key features implemented:
+- HTTP POST to Groq API endpoint
+- Llama 3.1 70B model configuration
+- JSON response format enforcement
+- Low temperature (0.1) for factual extraction
+- Structured prompt engineering
+- Null-safe JSON parsing
+- Returns empty Optionals for missing fields
+
+### 5.5.5 Create LLM Configuration Class (30 minutes)
+
+**File:** `LlmConfiguration.java`
+
+Configuration with validation:
+- @PostConstruct validation
+- Logs LLM availability on startup
+- Dependency injection setup
+
+### 5.5.6 Update ExtractionService with LLM-First Strategy (1 hour)
+
+**File:** `ExtractionService.java`
+
+Implemented dual extraction strategy:
+1. Try LLM extraction first (Groq API)
+2. If LLM fails or disabled → Fallback to regex
+3. Unwrap Optional<T> values with .orElse() defaults
+
+### 5.5.7 Configure Environment Variables (15 minutes)
+
+Updated configuration files:
+- `application.properties` - Production config with env vars
+- `application-local.properties` - Local config with API key
+- `.env` - Docker environment variables
+
+### Verification (Phase 5.5):
+```bash
+# Build project
+mvn clean compile
+
+# Check logs for LLM initialization
+# Expected: "✓ LLM extraction service is enabled and available: Groq (Llama 3.1 70B)"
+
+# All tests pass
+mvn test
+```
+
+**Completed Features:**
+- ✅ Hexagonal architecture with port/adapter pattern
+- ✅ Provider-agnostic design (easy to swap LLM providers)
+- ✅ Optional<T> pattern for explicit null handling
+- ✅ Automatic fallback to regex if LLM fails
+- ✅ Free Groq API integration
+- ✅ Fast extraction (2-5 seconds via Groq)
+- ✅ High accuracy with context understanding
 
 ---
 

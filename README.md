@@ -1,19 +1,24 @@
 # Invoice Extractor Service
 
-A microservice for extracting invoice data from PDF and image files using Tesseract OCR and hexagonal architecture.
+A microservice for extracting invoice data from PDF and image files using Tesseract OCR, Groq LLM, and hexagonal architecture.
 
 ![Java](https://img.shields.io/badge/Java-17-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.1.2-brightgreen)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-blue)
 ![Tesseract](https://img.shields.io/badge/Tesseract-5.x-red)
+![Groq](https://img.shields.io/badge/Groq-Llama%203.1-purple)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue)
 
 ---
 
 ## Features
 
-- **OCR Extraction**: Extract invoice data from PDF and images using Tesseract OCR
+- **Intelligent LLM Extraction**: Uses Groq's Llama 3.1 70B model for accurate invoice data extraction
+- **OCR Processing**: Tesseract OCR for text extraction from PDF and images
+- **Dual Extraction Strategy**: LLM-first approach with regex fallback for reliability
 - **Hexagonal Architecture**: Clean separation of concerns with ports and adapters
+- **Provider-Agnostic Design**: Easy to switch between LLM providers (Groq, OpenAI, etc.)
+- **Optional Pattern**: Explicit null handling for missing invoice fields
 - **Async Operations**: Non-blocking operations with CompletableFuture
 - **RESTful API**: OpenAPI 3.0 documented endpoints
 - **Docker Support**: Containerized deployment with Docker Compose
@@ -24,10 +29,16 @@ A microservice for extracting invoice data from PDF and image files using Tesser
 
 ## Extracted Fields
 
-- Invoice Number
-- Invoice Amount
-- Client Name
-- Client Address
+The service extracts the following fields from invoices using LLM intelligence:
+
+- **Invoice Number**: Document/invoice identifier
+- **Invoice Amount**: Total amount with currency
+- **Client Name**: Bill To / Customer name
+- **Client Address**: Full customer address
+- **Currency**: Currency code (USD, EUR, MXN, etc.)
+- **Confidence Score**: LLM extraction confidence (0.0 - 1.0)
+
+Fields use `Optional<T>` pattern - returns `null` when extraction is not possible.
 
 ---
 
@@ -38,6 +49,11 @@ A microservice for extracting invoice data from PDF and image files using Tesser
 - **Spring Boot 3.1.2**
 - **Spring Data JPA**
 - **PostgreSQL 15**
+
+### LLM & AI Processing
+- **Groq API** (Llama 3.1 70B model)
+- **OkHttp 4.12.0** (HTTP client for API calls)
+- **Jackson** (JSON parsing)
 
 ### OCR & File Processing
 - **Tesseract 5.x** (via Tess4j)
@@ -131,7 +147,7 @@ CREATE DATABASE invoicedb;
 
 ### Application Configuration
 
-Edit `src/main/resources/application.properties`:
+Edit `src/main/resources/application-local.properties`:
 
 ```properties
 # Database
@@ -140,8 +156,17 @@ spring.datasource.username=your_username
 spring.datasource.password=your_password
 
 # Tesseract (update path)
-tesseract.datapath=C:/Program Files/Tesseract-OCR/tessdata
+ocr.tesseract.datapath=C:/Program Files/Tesseract-OCR/tessdata
+ocr.tesseract.language=eng
+ocr.tesseract.dpi=300
+
+# Groq LLM Configuration
+llm.groq.enabled=true
+llm.groq.api-key=your_groq_api_key_here
+llm.groq.model=llama-3.1-70b-versatile
 ```
+
+**Get a free Groq API key**: https://console.groq.com/keys
 
 ### Build and Run
 
@@ -175,7 +200,11 @@ invoice-extractor-service/
 │   │   │   │       │   ├── entity/
 │   │   │   │       │   ├── repository/
 │   │   │   │       │   └── converter/
-│   │   │   │       └── ocr/                   # Tesseract OCR
+│   │   │   │       ├── llm/v1_0/              # LLM Integration
+│   │   │   │       │   ├── impl/              # Groq Implementation
+│   │   │   │       │   ├── InvoiceData.java
+│   │   │   │       │   └── ILlmExtractionService.java
+│   │   │   │       └── ocr/v1_0/              # Tesseract OCR
 │   │   │   ├── domain/
 │   │   │   │   ├── model/                     # Domain Models
 │   │   │   │   └── service/                   # Business Logic
@@ -253,23 +282,43 @@ GET /api/v1.0/invoices/search?clientName=ACME
 ┌─────────────────────────────────────────────────────────────┐
 │                      DOMAIN LAYER                            │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │  Domain Models (Records) ← Business Services           │ │
+│  │  Domain Models (Records) ← Extraction Service          │ │
+│  │  (InvoiceModel, ExtractionMetadataModel)               │ │
 │  └────────────────────────────────────────────────────────┘ │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-            ┌───────────────┴──────────────┐
-            ↓                              ↓
-┌───────────────────────┐      ┌─────────────────────────┐
-│  DATABASE ADAPTER     │      │   OCR ADAPTER           │
-│  (Outbound)           │      │   (Outbound)            │
-│  ┌─────────────────┐ │      │  ┌───────────────────┐  │
-│  │ Repositories    │ │      │  │ Tesseract Service │  │
-│  │ JPA Entities    │ │      │  │ PDF Processor     │  │
-│  │ Mappers         │ │      │  │ Image Processor   │  │
-│  └─────────────────┘ │      │  └───────────────────┘  │
-└───────────────────────┘      └─────────────────────────┘
-           ↓                              ↓
-       PostgreSQL                    Tesseract OCR
+└─────────────────┬───────────────────────────────────────────┘
+                  │
+      ┌───────────┴───────────┬────────────────┐
+      ↓                       ↓                ↓
+┌──────────────┐    ┌──────────────────┐    ┌──────────────┐
+│  DATABASE    │    │  LLM ADAPTER     │    │  OCR ADAPTER │
+│  ADAPTER     │    │  (Outbound)      │    │  (Outbound)  │
+│  (Outbound)  │    │ ┌──────────────┐ │    │ ┌──────────┐ │
+│ ┌──────────┐ │    │ │ ILlmExtract  │ │    │ │Tesseract │ │
+│ │Repository│ │    │ │   Service    │ │    │ │ Service  │ │
+│ │JPA Entity│ │    │ │   (Port)     │ │    │ │   PDF    │ │
+│ │ Mappers  │ │    │ └──────┬───────┘ │    │ │  Image   │ │
+│ └──────────┘ │    │        ↓         │    │ └──────────┘ │
+└──────┬───────┘    │ ┌──────────────┐ │    └──────┬───────┘
+       ↓            │ │ GroqLlmService│ │           ↓
+   PostgreSQL       │ │  (Adapter)    │ │    Tesseract OCR
+                    │ └──────┬────────┘ │
+                    └────────┼──────────┘
+                             ↓
+                      Groq API (Llama 3.1)
+```
+
+### Extraction Strategy
+
+```
+1. Upload Invoice (PDF/Image)
+        ↓
+2. OCR Extraction (Tesseract) → Raw Text
+        ↓
+3. LLM Processing (Groq) → Structured Data
+   ├─ Success: Return InvoiceData with Optional fields
+   └─ Failure: Fallback to Regex patterns
+        ↓
+4. Save to Database (PostgreSQL)
 ```
 
 ---
@@ -307,15 +356,29 @@ docker-compose run invoice-extractor-service mvn test
 | `DATASOURCE_USERNAME` | Database username | `postgres` |
 | `DATASOURCE_PASSWORD` | Database password | - |
 | `TESSDATA_PREFIX` | Tesseract data path | `/usr/share/tessdata` |
-| `SPRING_PROFILES_ACTIVE` | Active profile | `default` |
+| `LLM_ENABLED` | Enable/disable LLM extraction | `true` |
+| `GROQ_API_KEY` | Groq API key for LLM | - |
+| `SPRING_PROFILES_ACTIVE` | Active profile | `docker` |
+
+### Groq LLM Configuration
+
+```properties
+# Enable LLM extraction
+llm.groq.enabled=true
+
+# Your Groq API key (get free at https://console.groq.com/keys)
+llm.groq.api-key=your_api_key_here
+
+# Model to use
+llm.groq.model=llama-3.1-70b-versatile
+```
 
 ### Tesseract Configuration
 
 ```properties
-tesseract.datapath=/usr/share/tessdata
-tesseract.language=eng+spa
-tesseract.page-seg-mode=1
-tesseract.oem-mode=3
+ocr.tesseract.datapath=/usr/share/tessdata
+ocr.tesseract.language=eng
+ocr.tesseract.dpi=300
 ```
 
 ---
@@ -393,5 +456,5 @@ Luis Espinoza - Practice Project
 
 ---
 
-**Last Updated**: 2025-12-08
-**Status**: ✅ Fully Functional - REST API Ready
+**Last Updated**: 2025-12-09
+**Status**: ✅ Fully Functional - REST API with LLM Intelligence
