@@ -1,28 +1,6 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15-alpine
-    container_name: invoice-extractor-db
-    environment:
-      POSTGRES_DB: invoicedb
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres123
-      POSTGRES_INITDB_ARGS: "-E UTF8"
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./src/main/resources/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
-      - ./src/main/resources/db/sample-data.sql:/docker-entrypoint-initdb.d/02-sample-data.sql
-    networks:
-      - invoice-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   # Invoice Extractor Service
   invoice-extractor-service:
@@ -32,24 +10,21 @@ services:
     container_name: invoice-extractor-api
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      DATASOURCE_URL: jdbc:postgresql://postgres:5432/invoicedb
-      DATASOURCE_USERNAME: postgres
-      DATASOURCE_PASSWORD: postgres123
+      SPRING_DATASOURCE_URL: jdbc:postgresql://dpg-d4pfk8khg0os73ar3c70-a.virginia-postgres.render.com/postgresql_invoice_service
+      SPRING_DATASOURCE_USERNAME: lespinoza
+      SPRING_DATASOURCE_PASSWORD: q79wfvFfHxhdL36pWB0D4iSCRriuygt1
       TESSDATA_PREFIX: /usr/share/tessdata
+      UPLOAD_DIRECTORY: /app/uploads
     ports:
       - "8080:8080"
     volumes:
       - uploads_data:/app/uploads
     networks:
       - invoice-network
-    depends_on:
-      postgres:
-        condition: service_healthy
+    # No depends_on, as DB is remote
     restart: unless-stopped
 
 volumes:
-  postgres_data:
-    driver: local
   uploads_data:
     driver: local
 
