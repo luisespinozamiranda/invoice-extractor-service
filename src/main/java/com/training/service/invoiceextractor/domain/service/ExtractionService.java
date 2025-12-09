@@ -73,13 +73,16 @@ public class ExtractionService implements IExtractionService {
                 InvoiceModel savedInvoice = invoiceRepositoryService.save(invoice).join();
 
                 // Create completed extraction metadata
+                // Wrap text in JSON format for PostgreSQL jsonb column
+                String extractionDataJson = wrapTextAsJson(extractedText);
+
                 ExtractionMetadataModel completedMetadata = ExtractionMetadataModel.createCompleted(
                         initialMetadata.extractionKey(),
                         savedInvoice.invoiceKey(),
                         fileName,
                         ocrResult.confidenceScore(),
                         ocrResult.engineVersion(),
-                        extractedText // Raw extraction data
+                        extractionDataJson // JSON-formatted extraction data
                 );
 
                 // Save completed metadata
@@ -299,5 +302,28 @@ public class ExtractionService implements IExtractionService {
             log.warn("Failed to parse amount: {}", amountStr);
             return BigDecimal.ZERO;
         }
+    }
+
+    /**
+     * Wrap extracted text in JSON format for PostgreSQL jsonb column.
+     * Escapes quotes and newlines to create valid JSON.
+     *
+     * @param text Raw text extracted by OCR
+     * @return JSON string in format: {"text": "escaped content", "length": 123}
+     */
+    private String wrapTextAsJson(String text) {
+        if (text == null) {
+            return "{\"text\":\"\",\"length\":0}";
+        }
+
+        // Escape special JSON characters
+        String escapedText = text
+                .replace("\\", "\\\\")  // Backslash must be first
+                .replace("\"", "\\\"")  // Escape quotes
+                .replace("\n", "\\n")   // Escape newlines
+                .replace("\r", "\\r")   // Escape carriage returns
+                .replace("\t", "\\t");  // Escape tabs
+
+        return String.format("{\"text\":\"%s\",\"length\":%d}", escapedText, text.length());
     }
 }
