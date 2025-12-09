@@ -45,5 +45,9 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:8080/invoice-extractor-service/actuator/health || exit 1
 
-# Run the application
-ENTRYPOINT ["java", "-jar", "app.jar"]
+# Run the application with optimized JVM settings
+# -Xmx512m: Maximum heap size (adjust based on Render plan)
+# -Xms256m: Initial heap size
+# -XX:+UseG1GC: Use G1 garbage collector (good for containerized apps)
+# -XX:MaxGCPauseMillis=200: Target max GC pause time
+ENTRYPOINT ["java", "-Xmx512m", "-Xms256m", "-XX:+UseG1GC", "-XX:MaxGCPauseMillis=200", "-jar", "app.jar"]
