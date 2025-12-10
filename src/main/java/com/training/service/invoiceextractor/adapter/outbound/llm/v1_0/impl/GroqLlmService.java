@@ -23,7 +23,7 @@ import java.util.concurrent.CompletableFuture;
 public class GroqLlmService implements ILlmExtractionService {
 
     private static final String GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-    private static final String DEFAULT_MODEL = "llama-3.1-70b-versatile";
+    private static final String DEFAULT_MODEL = "llama-3.3-70b-versatile";
     private static final MediaType JSON_MEDIA_TYPE = MediaType.parse("application/json; charset=utf-8");
 
     private final OkHttpClient httpClient;
