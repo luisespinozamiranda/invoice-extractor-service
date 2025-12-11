@@ -112,24 +112,27 @@ public class TesseractOcrService implements IOcrService {
 
     /**
      * Create and configure Tesseract instance with optimized settings for invoices.
+     * Balanced for speed and accuracy.
      */
     private ITesseract createTesseractInstance() {
         ITesseract tesseract = new Tesseract();
         tesseract.setDatapath(tesseractDataPath);
         tesseract.setLanguage(tesseractLanguage);
 
-        // Use combined LSTM + Legacy engine for better accuracy
-        tesseract.setOcrEngineMode(2); // OEM_TESSERACT_LSTM_COMBINED
+        // Use LSTM engine only for faster processing (OEM 1 is ~2x faster than OEM 2)
+        // LSTM is very accurate for modern printed text like invoices
+        tesseract.setOcrEngineMode(1); // OEM_LSTM_ONLY
 
-        // PSM 6: Assume a single uniform block of text (good for invoices)
-        tesseract.setPageSegMode(6);
+        // PSM 3: Fully automatic page segmentation (faster and works well for invoices)
+        // PSM 6 was causing slower processing without significant accuracy gain
+        tesseract.setPageSegMode(3);
 
         // Tesseract configuration variables for better OCR quality
         tesseract.setTessVariable("tessedit_char_whitelist",
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,/$€£¥-:#@() \n");
         tesseract.setTessVariable("preserve_interword_spaces", "1");
 
-        log.debug("Tesseract configured: datapath={}, language={}, PSM=6, OEM=2",
+        log.debug("Tesseract configured: datapath={}, language={}, PSM=3, OEM=1 (LSTM)",
                 tesseractDataPath, tesseractLanguage);
         return tesseract;
     }
