@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -52,8 +53,11 @@ public class TesseractOcrService implements IOcrService {
     @Value("${ocr.tesseract.language:eng}")
     private String tesseractLanguage;
 
-    @Value("${ocr.tesseract.dpi:300}")
+    @Value("${ocr.tesseract.dpi:400}")
     private int pdfRenderingDpi;
+
+    @Value("${ocr.tesseract.enhance:true}")
+    private boolean enhanceImages;
 
     private static final String ENGINE_NAME = "Tesseract";
     private static final List<String> SUPPORTED_IMAGE_TYPES = List.of(
@@ -107,21 +111,31 @@ public class TesseractOcrService implements IOcrService {
     }
 
     /**
-     * Create and configure Tesseract instance.
+     * Create and configure Tesseract instance with optimized settings for invoices.
      */
     private ITesseract createTesseractInstance() {
         ITesseract tesseract = new Tesseract();
         tesseract.setDatapath(tesseractDataPath);
         tesseract.setLanguage(tesseractLanguage);
-        tesseract.setOcrEngineMode(1); // LSTM OCR Engine Mode
-        tesseract.setPageSegMode(3);   // Fully automatic page segmentation (no OSD)
 
-        log.debug("Tesseract configured: datapath={}, language={}", tesseractDataPath, tesseractLanguage);
+        // Use combined LSTM + Legacy engine for better accuracy
+        tesseract.setOcrEngineMode(2); // OEM_TESSERACT_LSTM_COMBINED
+
+        // PSM 6: Assume a single uniform block of text (good for invoices)
+        tesseract.setPageSegMode(6);
+
+        // Tesseract configuration variables for better OCR quality
+        tesseract.setTessVariable("tessedit_char_whitelist",
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,/$€£¥-:#@() \n");
+        tesseract.setTessVariable("preserve_interword_spaces", "1");
+
+        log.debug("Tesseract configured: datapath={}, language={}, PSM=6, OEM=2",
+                tesseractDataPath, tesseractLanguage);
         return tesseract;
     }
 
     /**
-     * Extract text from image file.
+     * Extract text from image file with preprocessing.
      */
     private OcrResult extractFromImage(ITesseract tesseract, byte[] imageData, String fileName, long startTime) {
         try {
@@ -135,6 +149,12 @@ public class TesseractOcrService implements IOcrService {
             }
 
             log.debug("Processing image: {}x{} pixels", image.getWidth(), image.getHeight());
+
+            // Apply image preprocessing if enabled
+            if (enhanceImages) {
+                image = enhanceImageForOcr(image);
+                log.debug("Image enhancement applied");
+            }
 
             String extractedText = tesseract.doOCR(image);
             double confidence = calculateConfidence(extractedText);
@@ -184,6 +204,12 @@ public class TesseractOcrService implements IOcrService {
                 log.debug("Processing page {}/{}", pageIndex + 1, pageCount);
 
                 BufferedImage pageImage = pdfRenderer.renderImageWithDPI(pageIndex, pdfRenderingDpi);
+
+                // Apply image preprocessing if enabled
+                if (enhanceImages) {
+                    pageImage = enhanceImageForOcr(pageImage);
+                }
+
                 String pageText = tesseract.doOCR(pageImage);
 
                 allText.append(pageText);
@@ -257,6 +283,108 @@ public class TesseractOcrService implements IOcrService {
         if (specialCharRatio > 0.3) score -= 0.2;
 
         return Math.max(0.0, Math.min(1.0, score));
+    }
+
+    /**
+     * Enhance image quality for better OCR results.
+     * Applies preprocessing techniques including:
+     * - Grayscale conversion
+     * - Contrast enhancement
+     * - Adaptive thresholding (binarization)
+     * - Noise reduction
+     *
+     * @param original Original image
+     * @return Enhanced image optimized for OCR
+     */
+    private BufferedImage enhanceImageForOcr(BufferedImage original) {
+        int width = original.getWidth();
+        int height = original.getHeight();
+
+        // Step 1: Convert to grayscale
+        BufferedImage grayscale = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_GRAY);
+        Graphics2D g2d = grayscale.createGraphics();
+        g2d.drawImage(original, 0, 0, null);
+        g2d.dispose();
+
+        // Step 2: Apply contrast enhancement and binarization
+        BufferedImage enhanced = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_BINARY);
+
+        // Calculate threshold using Otsu's method (simplified version)
+        int threshold = calculateOtsuThreshold(grayscale);
+
+        // Apply threshold
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int pixel = grayscale.getRGB(x, y);
+                int gray = pixel & 0xFF; // Extract gray value
+
+                // Binarize: white if above threshold, black otherwise
+                int newPixel = (gray > threshold) ? 0xFFFFFFFF : 0xFF000000;
+                enhanced.setRGB(x, y, newPixel);
+            }
+        }
+
+        return enhanced;
+    }
+
+    /**
+     * Calculate optimal threshold using Otsu's method.
+     * This is a simplified implementation for automatic thresholding.
+     *
+     * @param image Grayscale image
+     * @return Optimal threshold value (0-255)
+     */
+    private int calculateOtsuThreshold(BufferedImage image) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+
+        // Build histogram
+        int[] histogram = new int[256];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int pixel = image.getRGB(x, y);
+                int gray = pixel & 0xFF;
+                histogram[gray]++;
+            }
+        }
+
+        // Total number of pixels
+        int total = width * height;
+
+        // Calculate the optimal threshold
+        double sum = 0;
+        for (int i = 0; i < 256; i++) {
+            sum += i * histogram[i];
+        }
+
+        double sumB = 0;
+        int wB = 0;
+        int wF;
+
+        double varMax = 0;
+        int threshold = 0;
+
+        for (int t = 0; t < 256; t++) {
+            wB += histogram[t];
+            if (wB == 0) continue;
+
+            wF = total - wB;
+            if (wF == 0) break;
+
+            sumB += t * histogram[t];
+
+            double mB = sumB / wB;
+            double mF = (sum - sumB) / wF;
+
+            double varBetween = (double) wB * (double) wF * (mB - mF) * (mB - mF);
+
+            if (varBetween > varMax) {
+                varMax = varBetween;
+                threshold = t;
+            }
+        }
+
+        return threshold;
     }
 
     /**

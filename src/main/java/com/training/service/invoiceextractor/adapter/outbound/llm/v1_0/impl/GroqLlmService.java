@@ -67,8 +67,6 @@ public class GroqLlmService implements ILlmExtractionService {
                 String prompt = buildExtractionPrompt(ocrText);
                 String requestBody = buildRequestBody(prompt);
 
-                log.debug("Groq API Request Body: {}", requestBody);
-
                 Request request = new Request.Builder()
                         .url(GROQ_API_URL)
                         .header("Authorization", "Bearer " + apiKey)
@@ -167,8 +165,6 @@ public class GroqLlmService implements ILlmExtractionService {
                     .path("message")
                     .path("content")
                     .asText();
-
-            log.debug("LLM extracted content: {}", content);
 
             // Parse the JSON content from LLM
             return parseInvoiceJson(content);
