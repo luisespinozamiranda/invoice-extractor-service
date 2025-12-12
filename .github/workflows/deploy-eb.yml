@@ -28,5 +28,4 @@ jobs:
           region: ${{ secrets.AWS_REGION }}
           version_label: "github-${{ github.run_number }}-${{ github.sha }}"
           deployment_package: "deploy.zip"
-          s3_bucket: ${{ secrets.EB_BUCKET }}
-          s3_key: "deploy-${{ github.sha }}.zip"
+          use_existing_version_if_available: true
