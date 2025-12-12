@@ -2,7 +2,6 @@ version: '3.8'
 
 services:
 
-  # Invoice Extractor Service
   invoice-extractor-service:
     build:
       context: .
@@ -10,19 +9,18 @@ services:
     container_name: invoice-extractor-api
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      DATASOURCE_URL: jdbc:postgresql://dpg-d4pfk8khg0os73ar3c70-a.virginia-postgres.render.com/postgresql_invoice_service
-      DATASOURCE_USERNAME: lespinoza
-      DATASOURCE_PASSWORD: q79wfvFfHxhdL36pWB0D4iSCRriuygt1
+      DATASOURCE_URL: ${DATASOURCE_URL}
+      DATASOURCE_USERNAME: ${DATASOURCE_USERNAME}
+      DATASOURCE_PASSWORD: ${DATASOURCE_PASSWORD}
       TESSDATA_PREFIX: /usr/share/tesseract-ocr/4.00/tessdata
       UPLOAD_DIRECTORY: /app/uploads
-      GROQ_API_KEY: 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
+      GROQ_API_KEY: ${GROQ_API_KEY}
     ports:
       - "8080:8080"
     volumes:
       - uploads_data:/app/uploads
     networks:
       - invoice-network
-    # No depends_on, as DB is remote
     restart: unless-stopped
 
 volumes:
