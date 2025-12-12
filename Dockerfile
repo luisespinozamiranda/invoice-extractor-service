@@ -14,16 +14,17 @@ COPY src ./src
 RUN mvn clean package -DskipTests
 
 # Stage 2: Runtime stage with Tesseract OCR
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:17-jre-jammy
 
 # Install Tesseract OCR and language data
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
-    tesseract-ocr-data-eng \
-    tesseract-ocr-data-spa \
+    tesseract-ocr-eng \
+    tesseract-ocr-spa \
     ghostscript \
-    fontconfig \
-    ttf-dejavu
+    fonts-dejavu \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
 WORKDIR /app
@@ -34,9 +35,8 @@ COPY --from=builder /app/target/*.jar app.jar
 # Create directory for uploaded files
 RUN mkdir -p /app/uploads && chmod 777 /app/uploads
 
-# Set environment variables
-ENV TESSDATA_PREFIX=/usr/share/tessdata
-ENV SPRING_PROFILES_ACTIVE=docker
+# Verify tessdata installation
+RUN tesseract --list-langs
 
 # Expose port
 EXPOSE 8080

@@ -13,8 +13,9 @@ services:
       DATASOURCE_URL: jdbc:postgresql://dpg-d4pfk8khg0os73ar3c70-a.virginia-postgres.render.com/postgresql_invoice_service
       DATASOURCE_USERNAME: lespinoza
       DATASOURCE_PASSWORD: q79wfvFfHxhdL36pWB0D4iSCRriuygt1
-      TESSDATA_PREFIX: /usr/share/tessdata
+      TESSDATA_PREFIX: /usr/share/tesseract-ocr/4.00/tessdata
       UPLOAD_DIRECTORY: /app/uploads
+      GROQ_API_KEY: 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
     ports:
       - "8080:8080"
     volumes:

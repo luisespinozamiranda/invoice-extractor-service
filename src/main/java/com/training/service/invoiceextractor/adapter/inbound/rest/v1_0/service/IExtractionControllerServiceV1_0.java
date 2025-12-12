@@ -18,15 +18,15 @@ public interface IExtractionControllerServiceV1_0 {
      * Extract invoice data from uploaded file
      *
      * @param file The uploaded file (PDF or image)
-     * @return CompletableFuture with ResponseEntity containing extraction response
+     * @return CompletableFuture with ResponseEntity containing extraction metadata
      */
-    CompletableFuture<ResponseEntity<ExtractionResponseV1_0>> extractInvoice(MultipartFile file);
+    CompletableFuture<ResponseEntity<ExtractionMetadataV1_0>> extractInvoice(MultipartFile file);
 
     /**
-     * Get extraction metadata by key
+     * Get extraction metadata by invoice key
      *
-     * @param extractionKey The extraction key
+     * @param invoiceKey The invoice key
      * @return CompletableFuture with ResponseEntity containing extraction metadata DTO
      */
-    CompletableFuture<ResponseEntity<ExtractionMetadataV1_0>> getExtractionMetadata(UUID extractionKey);
+    CompletableFuture<ResponseEntity<ExtractionMetadataV1_0>> getExtractionByInvoice(UUID invoiceKey);
 }

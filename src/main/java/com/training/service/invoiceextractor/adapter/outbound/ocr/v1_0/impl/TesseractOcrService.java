@@ -53,11 +53,23 @@ public class TesseractOcrService implements IOcrService {
     @Value("${ocr.tesseract.language:eng}")
     private String tesseractLanguage;
 
-    @Value("${ocr.tesseract.dpi:400}")
+    @Value("${ocr.tesseract.dpi:300}")
     private int pdfRenderingDpi;
 
-    @Value("${ocr.tesseract.enhance:true}")
+    @Value("${ocr.tesseract.enhance:false}")
     private boolean enhanceImages;
+
+    @Value("${ocr.tesseract.oem:1}")
+    private int ocrEngineMode;
+
+    @Value("${ocr.tesseract.psm:3}")
+    private int pageSegmentationMode;
+
+    @Value("${ocr.tesseract.char-whitelist:}")
+    private String charWhitelist;
+
+    @Value("${ocr.tesseract.preserve-interword-spaces:1}")
+    private String preserveInterwordSpaces;
 
     private static final String ENGINE_NAME = "Tesseract";
     private static final List<String> SUPPORTED_IMAGE_TYPES = List.of(
@@ -112,28 +124,29 @@ public class TesseractOcrService implements IOcrService {
 
     /**
      * Create and configure Tesseract instance with optimized settings for invoices.
-     * Balanced for speed and accuracy.
+     * All settings are configurable via application properties.
      */
     private ITesseract createTesseractInstance() {
         ITesseract tesseract = new Tesseract();
         tesseract.setDatapath(tesseractDataPath);
         tesseract.setLanguage(tesseractLanguage);
 
-        // Use LSTM engine only for faster processing (OEM 1 is ~2x faster than OEM 2)
-        // LSTM is very accurate for modern printed text like invoices
-        tesseract.setOcrEngineMode(1); // OEM_LSTM_ONLY
+        // OEM (OCR Engine Mode) - configurable via ocr.tesseract.oem
+        tesseract.setOcrEngineMode(ocrEngineMode);
 
-        // PSM 3: Fully automatic page segmentation (faster and works well for invoices)
-        // PSM 6 was causing slower processing without significant accuracy gain
-        tesseract.setPageSegMode(3);
+        // PSM (Page Segmentation Mode) - configurable via ocr.tesseract.psm
+        tesseract.setPageSegMode(pageSegmentationMode);
 
-        // Tesseract configuration variables for better OCR quality
-        tesseract.setTessVariable("tessedit_char_whitelist",
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,/$€£¥-:#@() \n");
-        tesseract.setTessVariable("preserve_interword_spaces", "1");
+        // Character whitelist - configurable via ocr.tesseract.char-whitelist
+        if (charWhitelist != null && !charWhitelist.isEmpty()) {
+            tesseract.setTessVariable("tessedit_char_whitelist", charWhitelist);
+        }
 
-        log.debug("Tesseract configured: datapath={}, language={}, PSM=3, OEM=1 (LSTM)",
-                tesseractDataPath, tesseractLanguage);
+        // Preserve interword spaces - configurable via ocr.tesseract.preserve-interword-spaces
+        tesseract.setTessVariable("preserve_interword_spaces", preserveInterwordSpaces);
+
+        log.debug("Tesseract configured: datapath={}, language={}, PSM={}, OEM={}",
+                tesseractDataPath, tesseractLanguage, pageSegmentationMode, ocrEngineMode);
         return tesseract;
     }
 
@@ -391,9 +404,32 @@ public class TesseractOcrService implements IOcrService {
     }
 
     /**
-     * Get Tesseract version (simplified - would need native call for real version).
+     * Get Tesseract version by executing tesseract --version command.
+     * Returns the exact version of Tesseract installed on the system.
      */
     private String getVersion() {
-        return "5.x"; // Placeholder - real version would require JNI call
+        try {
+            ProcessBuilder processBuilder = new ProcessBuilder("tesseract", "--version");
+            processBuilder.redirectErrorStream(true);
+            Process process = processBuilder.start();
+
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(process.getInputStream()))) {
+                String firstLine = reader.readLine();
+                if (firstLine != null && firstLine.contains("tesseract")) {
+                    // Extract version from output like "tesseract 4.1.1" or "tesseract 5.3.0"
+                    String[] parts = firstLine.split("\\s+");
+                    if (parts.length >= 2) {
+                        return parts[1]; // Return just the version number
+                    }
+                }
+            }
+
+            process.waitFor();
+        } catch (Exception ex) {
+            log.warn("Could not determine Tesseract version: {}", ex.getMessage());
+        }
+
+        return "unknown"; // Fallback if version cannot be determined
     }
 }

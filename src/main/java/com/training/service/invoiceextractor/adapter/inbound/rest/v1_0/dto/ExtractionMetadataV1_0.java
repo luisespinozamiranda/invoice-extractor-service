@@ -28,12 +28,6 @@ public class ExtractionMetadataV1_0 {
     @JsonProperty("source_file_name")
     private String sourceFileName;
 
-    @JsonProperty("file_type")
-    private String fileType;
-
-    @JsonProperty("file_size_bytes")
-    private Long fileSizeBytes;
-
     @JsonProperty("extraction_timestamp")
     private LocalDateTime extractionTimestamp;
 

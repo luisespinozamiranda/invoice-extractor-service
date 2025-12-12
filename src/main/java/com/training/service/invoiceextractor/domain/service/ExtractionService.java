@@ -19,8 +19,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Domain service implementation for invoice extraction operations.
@@ -35,24 +33,6 @@ public class ExtractionService implements IExtractionService {
     private final IExtractionMetadataRepositoryService extractionMetadataRepositoryService;
     private final IOcrService ocrService;
     private final ILlmExtractionService llmExtractionService;
-
-    // Regex patterns for invoice field extraction - optimized for real-world invoices
-    private static final Pattern INVOICE_NUMBER_PATTERN = Pattern.compile(
-            "(?i)(?:invoice|document|doc|inv)\\s*(?:#|no\\.?|number)?\\s*:?\\s*([A-Z0-9-]+)",
-            Pattern.MULTILINE
-    );
-
-    // Match invoice total with priority: "Invoice Total" > "Estimated Invoice Total" > "Total" > "Balance Due"
-    private static final Pattern AMOUNT_PATTERN = Pattern.compile(
-            "(?i)(?:estimated.*?invoice\\s+total|current\\s+invoice\\s+total|invoice\\s+total|total\\s+tax|grand\\s+total|amount\\s+due|balance\\s+due)\\s*:?\\s*\\$\\s*([0-9,]+\\.[0-9]{2})",
-            Pattern.MULTILINE
-    );
-
-    // Match client name after "Bill To:" or "Bu To:" (OCR sometimes misreads "Bill" as "Bu")
-    private static final Pattern CLIENT_NAME_PATTERN = Pattern.compile(
-            "(?i)(?:bill\\s*to|bu\\s*to|sold\\s*to|customer)\\s*:?\\s*\\n?\\s*([A-Z][A-Z0-9,\\s\\.'-]+?)(?=\\n[0-9]|\\n[A-Z]{2}\\s|$)",
-            Pattern.MULTILINE | Pattern.DOTALL
-    );
 
     @Override
     public CompletableFuture<ExtractionMetadataModel> extractAndSaveInvoice(
@@ -278,76 +258,44 @@ public class ExtractionService implements IExtractionService {
     }
 
     /**
-     * Parse invoice data from extracted text.
-     * Uses LLM extraction if available, falls back to regex patterns.
+     * Parse invoice data from extracted text using LLM.
+     * If LLM is not available or fails, throws an exception.
      */
     private InvoiceModel parseInvoiceFromText(String extractedText, String fileName) {
-        // Try LLM extraction first (more accurate for varied invoice formats)
-        if (llmExtractionService.isAvailable()) {
-            try {
-                log.debug("Using LLM for invoice data extraction");
-                InvoiceData llmData = llmExtractionService.extractInvoiceData(extractedText).join();
-
-                if (llmData.isValid()) {
-                    log.info("LLM extraction successful with confidence: {}", llmData.confidence());
-                    return InvoiceModel.create(
-                            llmData.invoiceNumber().orElse("UNKNOWN"),
-                            llmData.amount().orElse(BigDecimal.ZERO),
-                            llmData.clientName().orElse("Unknown Client"),
-                            llmData.clientAddress().orElse(null),
-                            llmData.currency(),
-                            InvoiceModel.STATUS_EXTRACTED,
-                            fileName
-                    );
-                } else {
-                    log.warn("LLM extraction returned invalid data, falling back to regex");
-                }
-            } catch (Exception ex) {
-                log.warn("LLM extraction failed, falling back to regex: {}", ex.getMessage());
-            }
+        if (!llmExtractionService.isAvailable()) {
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.EXTRACTION_FAILED,
+                    "LLM service is not available for invoice data extraction"
+            );
         }
 
-        // Fallback to regex-based extraction
-        log.debug("Using regex patterns for invoice data extraction");
-        String invoiceNumber = extractField(extractedText, INVOICE_NUMBER_PATTERN, "UNKNOWN");
-        String amountStr = extractField(extractedText, AMOUNT_PATTERN, "0.00");
-        String clientName = extractField(extractedText, CLIENT_NAME_PATTERN, "Unknown Client");
-
-        // Clean amount string and parse
-        BigDecimal amount = parseAmount(amountStr);
-
-        return InvoiceModel.create(
-                invoiceNumber,
-                amount,
-                clientName.trim(),
-                null, // clientAddress - would extract from text
-                "USD",
-                InvoiceModel.STATUS_EXTRACTED,
-                fileName
-        );
-    }
-
-    /**
-     * Extract field from text using regex pattern
-     */
-    private String extractField(String text, Pattern pattern, String defaultValue) {
-        Matcher matcher = pattern.matcher(text);
-        if (matcher.find() && matcher.groupCount() >= 1) {
-            return matcher.group(1).trim();
-        }
-        return defaultValue;
-    }
-
-    /**
-     * Parse amount string to BigDecimal
-     */
-    private BigDecimal parseAmount(String amountStr) {
         try {
-            String cleaned = amountStr.replaceAll("[^0-9.]", "");
-            return new BigDecimal(cleaned);
+            log.debug("Using LLM for invoice data extraction");
+            InvoiceData llmData = llmExtractionService.extractInvoiceData(extractedText).join();
+
+            if (!llmData.isValid()) {
+                throw new InvoiceExtractorServiceException(
+                        ErrorCodes.EXTRACTION_FAILED,
+                        "LLM extraction returned invalid data"
+                );
+            }
+
+            log.info("LLM extraction successful with confidence: {}", llmData.confidence());
+            return InvoiceModel.create(
+                    llmData.invoiceNumber().orElse("UNKNOWN"),
+                    llmData.amount().orElse(BigDecimal.ZERO),
+                    llmData.clientName().orElse("Unknown Client"),
+                    llmData.clientAddress().orElse(null),
+                    llmData.currency(),
+                    InvoiceModel.STATUS_EXTRACTED,
+                    fileName
+            );
         } catch (Exception ex) {
-            log.warn("Failed to parse amount: {}", amountStr);
-            return BigDecimal.ZERO;
+            log.error("LLM extraction failed: {}", ex.getMessage());
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.EXTRACTION_FAILED,
+                    "LLM extraction failed: " + ex.getMessage()
+            );
         }
     }
 

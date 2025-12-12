@@ -50,8 +50,6 @@ public class IExtractionMetadataMapperV1_0 {
                 .extractionKey(model.extractionKey())
                 .invoiceKey(model.invoiceKey())
                 .sourceFileName(model.sourceFileName())
-                .fileType(null) // Domain model doesn't have fileType
-                .fileSizeBytes(null) // Domain model doesn't have fileSizeBytes
                 .extractionTimestamp(model.extractionTimestamp())
                 .extractionStatus(model.extractionStatus())
                 .confidenceScore(model.confidenceScore())

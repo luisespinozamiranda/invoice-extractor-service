@@ -31,7 +31,7 @@ public class ExtractionControllerServiceV1_0 implements IExtractionControllerSer
     private final IExtractionMetadataMapperV1_0 extractionMetadataMapper;
 
     @Override
-    public CompletableFuture<ResponseEntity<ExtractionResponseV1_0>> extractInvoice(MultipartFile file) {
+    public CompletableFuture<ResponseEntity<ExtractionMetadataV1_0>> extractInvoice(MultipartFile file) {
         log.debug("Extracting invoice from file: {}", file.getOriginalFilename());
 
         try {
@@ -42,14 +42,7 @@ public class ExtractionControllerServiceV1_0 implements IExtractionControllerSer
             return extractionService.extractAndSaveInvoice(fileData, fileName, fileType)
                     .thenApply(metadataModel -> {
                         ExtractionMetadataV1_0 metadataDto = extractionMetadataMapper.modelToDto(metadataModel);
-
-                        ExtractionResponseV1_0 response = ExtractionResponseV1_0.builder()
-                                .invoice(null) // Would need to fetch separately using metadataModel.invoiceKey()
-                                .extractionMetadata(metadataDto)
-                                .message("Invoice extracted successfully")
-                                .build();
-
-                        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+                        return ResponseEntity.status(HttpStatus.CREATED).body(metadataDto);
                     });
             // Async exceptions handled by GlobalExceptionHandler
         } catch (Exception ex) {
@@ -60,12 +53,16 @@ public class ExtractionControllerServiceV1_0 implements IExtractionControllerSer
     }
 
     @Override
-    public CompletableFuture<ResponseEntity<ExtractionMetadataV1_0>> getExtractionMetadata(UUID extractionKey) {
-        log.debug("Getting extraction metadata by key: {}", extractionKey);
+    public CompletableFuture<ResponseEntity<ExtractionMetadataV1_0>> getExtractionByInvoice(UUID invoiceKey) {
+        log.debug("Getting extraction by invoice key: {}", invoiceKey);
 
-        return extractionService.getExtractionMetadata(extractionKey)
-                .thenApply(metadataModel -> {
-                    ExtractionMetadataV1_0 dto = extractionMetadataMapper.modelToDto(metadataModel);
+        return extractionService.getExtractionsByInvoice(invoiceKey)
+                .thenApply(metadataModels -> {
+                    // Since relationship is 1:1, get the first (and only) extraction
+                    if (metadataModels.isEmpty()) {
+                        throw new RuntimeException("No extraction found for invoice: " + invoiceKey);
+                    }
+                    ExtractionMetadataV1_0 dto = extractionMetadataMapper.modelToDto(metadataModels.get(0));
                     return ResponseEntity.ok(dto);
                 });
     }

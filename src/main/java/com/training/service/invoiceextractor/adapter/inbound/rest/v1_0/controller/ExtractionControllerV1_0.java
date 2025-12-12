@@ -30,7 +30,7 @@ import java.util.concurrent.CompletableFuture;
  * <p><b>Endpoints:</b>
  * <ul>
  *   <li>POST / - Upload and extract invoice from file</li>
- *   <li>GET /{extraction_key} - Get extraction metadata by key</li>
+ *   <li>GET /{invoice_key} - Get extraction metadata by invoice key</li>
  * </ul>
  *
  * <p><b>Architecture:</b> REST Layer (Inbound Adapter)
@@ -61,23 +61,23 @@ public class ExtractionControllerV1_0 {
             @ApiResponse(responseCode = "400", description = "Invalid file or file format"),
             @ApiResponse(responseCode = "500", description = "Extraction failed")
     })
-    public CompletableFuture<ResponseEntity<ExtractionResponseV1_0>> extractInvoice(
+    public CompletableFuture<ResponseEntity<ExtractionMetadataV1_0>> extractInvoice(
             @Parameter(description = "Invoice file (PDF or image)") @RequestParam("file") MultipartFile file) {
         log.info("REST Request: POST /api/v1.0/extractions - File: {}", file.getOriginalFilename());
         return extractionControllerService.extractInvoice(file);
     }
 
     @Async
-    @GetMapping("/{extraction_key}")
-    @Operation(summary = "Get extraction metadata", description = "Retrieve extraction metadata by extraction key")
+    @GetMapping("/{invoice_key}")
+    @Operation(summary = "Get extraction metadata by invoice", description = "Retrieve extraction metadata by invoice key")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Extraction metadata found"),
             @ApiResponse(responseCode = "404", description = "Extraction metadata not found"),
             @ApiResponse(responseCode = "500", description = "Internal server error")
     })
-    public CompletableFuture<ResponseEntity<ExtractionMetadataV1_0>> getExtractionMetadata(
-            @Parameter(description = "Extraction unique key") @PathVariable("extraction_key") UUID extractionKey) {
-        log.info("REST Request: GET /api/v1.0/extractions/{}", extractionKey);
-        return extractionControllerService.getExtractionMetadata(extractionKey);
+    public CompletableFuture<ResponseEntity<ExtractionMetadataV1_0>> getExtractionByInvoice(
+            @Parameter(description = "Invoice unique key") @PathVariable("invoice_key") UUID invoiceKey) {
+        log.info("REST Request: GET /api/v1.0/extractions/{}", invoiceKey);
+        return extractionControllerService.getExtractionByInvoice(invoiceKey);
     }
 }

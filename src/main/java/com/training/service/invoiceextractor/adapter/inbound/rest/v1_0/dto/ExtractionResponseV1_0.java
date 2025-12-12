@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 
 /**
  * REST DTO for Extraction Response (API v1.0)
- * Contains both invoice and extraction metadata
+ * Contains extraction metadata with invoice_key inside
  */
 @Data
 @Builder
@@ -16,12 +16,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class ExtractionResponseV1_0 {
 
-    @JsonProperty("invoice")
-    private InvoiceV1_0 invoice;
-
     @JsonProperty("extraction_metadata")
     private ExtractionMetadataV1_0 extractionMetadata;
-
-    @JsonProperty("message")
-    private String message;
 }
