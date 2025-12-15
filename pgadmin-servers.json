@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Invoice Extractor DB",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "invoicedb",
+      "Username": "admin",
+      "SSLMode": "prefer",
+      "PassFile": "/tmp/pgpassfile"
+    }
+  }
+}

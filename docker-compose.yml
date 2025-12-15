@@ -2,6 +2,31 @@ version: '3.8'
 
 services:
 
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: invoice-postgres
+    environment:
+      POSTGRES_DB: invoicedb
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/main/resources/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./src/main/resources/db/sample-data.sql:/docker-entrypoint-initdb.d/02-sample-data.sql
+    networks:
+      - invoice-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d invoicedb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Backend API Service
   invoice-extractor-service:
     build:
       context: .
@@ -9,22 +34,82 @@ services:
     container_name: invoice-extractor-api
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      DATASOURCE_URL: ${DATASOURCE_URL}
-      DATASOURCE_USERNAME: ${DATASOURCE_USERNAME}
-      DATASOURCE_PASSWORD: ${DATASOURCE_PASSWORD}
+      DATASOURCE_URL: jdbc:postgresql://postgres:5432/invoicedb
+      DATASOURCE_USERNAME: admin
+      DATASOURCE_PASSWORD: admin
       TESSDATA_PREFIX: /usr/share/tesseract-ocr/4.00/tessdata
       UPLOAD_DIRECTORY: /app/uploads
-      GROQ_API_KEY: ${GROQ_API_KEY}
+      # Groq LLM Configuration
+      GROQ_API_KEY: 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
+      LLM_ENABLED: true
     ports:
       - "8080:8080"
     volumes:
       - uploads_data:/app/uploads
     networks:
       - invoice-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/invoice-extractor-service/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
+  # Frontend Angular Application
+  invoice-extractor-frontend:
+    build:
+      context: ../invoice-extractor-frontend
+      dockerfile: Dockerfile
+    container_name: invoice-extractor-frontend
+    ports:
+      - "80:80"
+    networks:
+      - invoice-network
+    depends_on:
+      - invoice-extractor-service
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # pgAdmin Web Interface
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: invoice-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@invoiceextractor.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "5050:80"
+    networks:
+      - invoice-network
+    depends_on:
+      - postgres
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./pgadmin-servers.json:/pgadmin4/servers.json:ro
+      - ./pgadmin-passfile:/tmp/pgpassfile:ro
+    restart: unless-stopped
+    entrypoint: >
+      /bin/sh -c "
+      chmod 600 /tmp/pgpassfile;
+      /entrypoint.sh
+      "
+
 volumes:
+  postgres_data:
+    driver: local
   uploads_data:
+    driver: local
+  pgadmin_data:
     driver: local
 
 networks:

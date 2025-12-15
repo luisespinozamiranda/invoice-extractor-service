@@ -15,6 +15,7 @@ public class WebConfig implements WebMvcConfigurer {
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")
                 .allowedOrigins(
+                        "http://localhost",                   // Docker Nginx frontend (port 80)
                         "http://localhost:4200",              // Angular dev server
                         "https://*.vercel.app",               // Production frontend (Vercel)
                         "https://*.netlify.app"               // Production frontend (Netlify)

@@ -1,5 +1,6 @@
 package com.training.service.invoiceextractor.domain.service;
 
+import com.training.service.invoiceextractor.adapter.inbound.websocket.service.ExtractionEventPublisher;
 import com.training.service.invoiceextractor.adapter.outbound.database.v1_0.repository.IExtractionMetadataRepositoryService;
 import com.training.service.invoiceextractor.adapter.outbound.database.v1_0.repository.IInvoiceRepositoryService;
 import com.training.service.invoiceextractor.adapter.outbound.llm.v1_0.ILlmExtractionService;
@@ -33,6 +34,7 @@ public class ExtractionService implements IExtractionService {
     private final IExtractionMetadataRepositoryService extractionMetadataRepositoryService;
     private final IOcrService ocrService;
     private final ILlmExtractionService llmExtractionService;
+    private final ExtractionEventPublisher eventPublisher;
 
     @Override
     public CompletableFuture<ExtractionMetadataModel> extractAndSaveInvoice(
@@ -43,12 +45,15 @@ public class ExtractionService implements IExtractionService {
         log.debug("Domain: Extracting and saving invoice from file: {}", fileName);
 
         return CompletableFuture.supplyAsync(() -> {
-            try {
-                // Create initial extraction metadata
-                ExtractionMetadataModel initialMetadata = ExtractionMetadataModel.createProcessing(fileName);
+            // Create initial extraction metadata (declare outside try-catch for access in catch block)
+            ExtractionMetadataModel initialMetadata = ExtractionMetadataModel.createProcessing(fileName);
 
+            try {
                 // Save initial processing state
                 extractionMetadataRepositoryService.save(initialMetadata).join();
+
+                // Publish EXTRACTION_STARTED event via WebSocket
+                eventPublisher.publishExtractionStarted(initialMetadata.extractionKey(), fileName);
 
                 // Extract text using OCR adapter
                 OcrResult ocrResult = ocrService.extractText(fileData, fileName, fileType).join();
@@ -62,11 +67,17 @@ public class ExtractionService implements IExtractionService {
 
                 String extractedText = ocrResult.extractedText();
 
+                // Publish OCR_COMPLETED event via WebSocket
+                eventPublisher.publishOcrCompleted(initialMetadata.extractionKey(), ocrResult);
+
                 // Parse extracted text into invoice data
-                InvoiceModel invoice = parseInvoiceFromText(extractedText, fileName);
+                InvoiceModel invoice = parseInvoiceFromText(extractedText, fileName, initialMetadata.extractionKey());
 
                 // Save the invoice
                 InvoiceModel savedInvoice = invoiceRepositoryService.save(invoice).join();
+
+                // Publish INVOICE_SAVED event via WebSocket
+                eventPublisher.publishInvoiceSaved(initialMetadata.extractionKey(), savedInvoice.invoiceKey());
 
                 // Create completed extraction metadata
                 // Wrap text in JSON format for PostgreSQL jsonb column
@@ -82,13 +93,25 @@ public class ExtractionService implements IExtractionService {
                 );
 
                 // Update completed metadata (don't insert again - use existing extraction_key)
-                return extractionMetadataRepositoryService.update(
+                ExtractionMetadataModel finalMetadata = extractionMetadataRepositoryService.update(
                         initialMetadata.extractionKey(),
                         completedMetadata
                 ).join();
 
+                // Publish EXTRACTION_COMPLETED event via WebSocket
+                eventPublisher.publishExtractionCompleted(
+                        initialMetadata.extractionKey(),
+                        savedInvoice.invoiceKey(),
+                        ocrResult.confidenceScore()
+                );
+
+                return finalMetadata;
+
             } catch (Exception ex) {
                 log.error("Error during extraction: {}", fileName, ex);
+
+                // Publish EXTRACTION_FAILED event via WebSocket
+                eventPublisher.publishExtractionFailed(initialMetadata.extractionKey(), ex.getMessage());
 
                 // Create failed extraction metadata
                 ExtractionMetadataModel failedMetadata = ExtractionMetadataModel.createFailed(
@@ -261,7 +284,7 @@ public class ExtractionService implements IExtractionService {
      * Parse invoice data from extracted text using LLM.
      * If LLM is not available or fails, throws an exception.
      */
-    private InvoiceModel parseInvoiceFromText(String extractedText, String fileName) {
+    private InvoiceModel parseInvoiceFromText(String extractedText, String fileName, UUID extractionKey) {
         if (!llmExtractionService.isAvailable()) {
             throw new InvoiceExtractorServiceException(
                     ErrorCodes.EXTRACTION_FAILED,
@@ -272,6 +295,9 @@ public class ExtractionService implements IExtractionService {
         try {
             log.debug("Using LLM for invoice data extraction");
             InvoiceData llmData = llmExtractionService.extractInvoiceData(extractedText).join();
+
+            // Publish LLM_EXTRACTION_COMPLETED event via WebSocket
+            eventPublisher.publishLlmCompleted(extractionKey, llmData);
 
             if (!llmData.isValid()) {
                 throw new InvoiceExtractorServiceException(

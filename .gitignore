@@ -1,5 +1,44 @@
+# Environment variables (if created optionally)
+.env
+
+# Maven
 target/
-.settings/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
 .classpath
-.factorypath
 .project
+.settings/
+.factorypath
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Application uploads (when running locally, not in Docker)
+uploads/
+
+# Docker volumes (managed by Docker)
+postgres_data/
+uploads_data/
+pgadmin_data/
