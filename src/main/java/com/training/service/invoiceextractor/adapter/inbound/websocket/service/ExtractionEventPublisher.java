@@ -23,8 +23,12 @@ import java.util.UUID;
  * <p><b>Event Flow:</b>
  * <ol>
  *   <li>Extraction Started (0%)</li>
- *   <li>OCR Completed (33%)</li>
- *   <li>LLM Extraction Completed (66%)</li>
+ *   <li>File Uploaded (10%)</li>
+ *   <li>OCR Started (20%)</li>
+ *   <li>OCR Completed (40%)</li>
+ *   <li>LLM Started (50%)</li>
+ *   <li>LLM Extraction Completed (70%)</li>
+ *   <li>Validating Data (80%)</li>
  *   <li>Invoice Saved (90%)</li>
  *   <li>Extraction Completed (100%) or Extraction Failed</li>
  * </ol>
@@ -76,7 +80,48 @@ public class ExtractionEventPublisher {
     }
 
     /**
-     * Publishes OCR_COMPLETED event (Progress: 33%).
+     * Publishes FILE_UPLOADED event (Progress: 10%).
+     *
+     * @param extractionKey Unique extraction identifier
+     * @param fileName Source file name
+     * @param fileSize File size in bytes
+     */
+    public void publishFileUploaded(UUID extractionKey, String fileName, long fileSize) {
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("fileName", fileName);
+        metadata.put("fileSize", fileSize);
+
+        ExtractionEventV1_0 event = ExtractionEventV1_0.builder()
+                .type("FILE_UPLOADED")
+                .extractionKey(extractionKey)
+                .status("PROCESSING")
+                .progress(10)
+                .message("File uploaded successfully")
+                .timestamp(LocalDateTime.now())
+                .metadata(metadata)
+                .build();
+        publishEvent(extractionKey, event);
+    }
+
+    /**
+     * Publishes OCR_STARTED event (Progress: 20%).
+     *
+     * @param extractionKey Unique extraction identifier
+     */
+    public void publishOcrStarted(UUID extractionKey) {
+        ExtractionEventV1_0 event = ExtractionEventV1_0.builder()
+                .type("OCR_STARTED")
+                .extractionKey(extractionKey)
+                .status("PROCESSING")
+                .progress(20)
+                .message("Starting OCR text extraction")
+                .timestamp(LocalDateTime.now())
+                .build();
+        publishEvent(extractionKey, event);
+    }
+
+    /**
+     * Publishes OCR_COMPLETED event (Progress: 40%).
      *
      * @param extractionKey Unique extraction identifier
      * @param ocrResult OCR extraction result with text and confidence
@@ -91,7 +136,7 @@ public class ExtractionEventPublisher {
                 .type("OCR_COMPLETED")
                 .extractionKey(extractionKey)
                 .status("PROCESSING")
-                .progress(33)
+                .progress(40)
                 .message("OCR extraction completed")
                 .timestamp(LocalDateTime.now())
                 .metadata(metadata)
@@ -100,7 +145,24 @@ public class ExtractionEventPublisher {
     }
 
     /**
-     * Publishes LLM_EXTRACTION_COMPLETED event (Progress: 66%).
+     * Publishes LLM_STARTED event (Progress: 50%).
+     *
+     * @param extractionKey Unique extraction identifier
+     */
+    public void publishLlmStarted(UUID extractionKey) {
+        ExtractionEventV1_0 event = ExtractionEventV1_0.builder()
+                .type("LLM_STARTED")
+                .extractionKey(extractionKey)
+                .status("PROCESSING")
+                .progress(50)
+                .message("Starting AI analysis of invoice data")
+                .timestamp(LocalDateTime.now())
+                .build();
+        publishEvent(extractionKey, event);
+    }
+
+    /**
+     * Publishes LLM_EXTRACTION_COMPLETED event (Progress: 70%).
      *
      * @param extractionKey Unique extraction identifier
      * @param invoiceData Parsed invoice data from LLM
@@ -115,10 +177,27 @@ public class ExtractionEventPublisher {
                 .type("LLM_EXTRACTION_COMPLETED")
                 .extractionKey(extractionKey)
                 .status("PROCESSING")
-                .progress(66)
-                .message("Invoice data extracted by LLM")
+                .progress(70)
+                .message("Invoice data extracted by AI")
                 .timestamp(LocalDateTime.now())
                 .metadata(metadata)
+                .build();
+        publishEvent(extractionKey, event);
+    }
+
+    /**
+     * Publishes VALIDATING_DATA event (Progress: 80%).
+     *
+     * @param extractionKey Unique extraction identifier
+     */
+    public void publishValidatingData(UUID extractionKey) {
+        ExtractionEventV1_0 event = ExtractionEventV1_0.builder()
+                .type("VALIDATING_DATA")
+                .extractionKey(extractionKey)
+                .status("PROCESSING")
+                .progress(80)
+                .message("Validating extracted invoice data")
+                .timestamp(LocalDateTime.now())
                 .build();
         publishEvent(extractionKey, event);
     }

@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.training.service.invoiceextractor.adapter.outbound.llm.v1_0.ILlmExtractionService;
 import com.training.service.invoiceextractor.adapter.outbound.llm.v1_0.InvoiceData;
+
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -13,6 +15,8 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+
+import org.apache.logging.log4j.util.Strings;
 
 /**
  * Groq LLM service implementation for invoice data extraction.
@@ -23,35 +27,25 @@ import java.util.concurrent.CompletableFuture;
 public class GroqLlmService implements ILlmExtractionService {
 
     private static final String GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-    private static final String DEFAULT_MODEL = "llama-3.3-70b-versatile";
     private static final MediaType JSON_MEDIA_TYPE = MediaType.parse("application/json; charset=utf-8");
 
     private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final String apiKey;
     private final String model;
-    private final boolean enabled;
 
     public GroqLlmService(
             @Value("${llm.groq.api-key:}") String apiKey,
             @Value("${llm.groq.model:llama-3.1-70b-versatile}") String model,
-            @Value("${llm.groq.enabled:false}") boolean enabled,
             ObjectMapper objectMapper
     ) {
         this.apiKey = apiKey;
-        this.model = model != null && !model.isBlank() ? model : DEFAULT_MODEL;
-        this.enabled = enabled;
+        this.model = model;
         this.objectMapper = objectMapper;
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .readTimeout(Duration.ofSeconds(30))
                 .build();
-
-        if (enabled && (apiKey == null || apiKey.isBlank())) {
-            log.warn("Groq LLM is enabled but API key is not configured. Service will not be available.");
-        } else if (enabled) {
-            log.info("Groq LLM service initialized with model: {}", this.model);
-        }
     }
 
     @Override
@@ -65,6 +59,7 @@ public class GroqLlmService implements ILlmExtractionService {
             try {
                 log.debug("Sending OCR text to Groq LLM for extraction");
                 String prompt = buildExtractionPrompt(ocrText);
+                log.debug("prompt: " + prompt);
                 String requestBody = buildRequestBody(prompt);
 
                 Request request = new Request.Builder()
@@ -82,6 +77,7 @@ public class GroqLlmService implements ILlmExtractionService {
                     }
 
                     String responseBody = response.body().string();
+                    log.debug("Received response from Groq LLM: {}", responseBody);
                     return parseGroqResponse(responseBody);
                 }
 
@@ -94,7 +90,7 @@ public class GroqLlmService implements ILlmExtractionService {
 
     @Override
     public boolean isAvailable() {
-        return enabled && apiKey != null && !apiKey.isBlank();
+        return Strings.isNotBlank(apiKey) && Strings.isNotBlank(model);
     }
 
     @Override
@@ -112,13 +108,20 @@ public class GroqLlmService implements ILlmExtractionService {
 
                 Extract the following fields from the invoice text below:
                 - invoice_number: The invoice or document number
-                - amount: The total invoice amount (as a decimal number, without currency symbols)
-                - client_name: The customer or "Bill To" name
+                - amount: the exact text containing the total amount, exactly as it appears
+                - client_name: The customer name
                 - client_address: The customer address (if available)
-                - currency: The currency code (e.g., USD, EUR, MXN)
+                - currency: (ISO code if possible)
 
                 Return ONLY a valid JSON object with these exact field names. No explanations.
                 If a field is not found, use null for strings or 0 for amount.
+
+                Rules:
+                - DO NOT normalize numbers
+                - DO NOT change separators
+                - DO NOT calculate
+                - Copy values EXACTLY as seen in the text
+                - If multiple totals exist, choose the FINAL payable amount
 
                 Invoice text:
                 %s

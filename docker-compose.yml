@@ -40,7 +40,7 @@ services:
       TESSDATA_PREFIX: /usr/share/tesseract-ocr/4.00/tessdata
       UPLOAD_DIRECTORY: /app/uploads
       # Groq LLM Configuration
-      GROQ_API_KEY: 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
+      GROQ_API_KEY: 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
       LLM_ENABLED: true
     ports:
       - "8080:8080"
