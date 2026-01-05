@@ -1,12 +1,14 @@
 package com.training.service.invoiceextractor.domain.service;
 
-import com.training.service.invoiceextractor.adapter.inbound.websocket.service.ExtractionEventPublisher;
 import com.training.service.invoiceextractor.adapter.outbound.database.v1_0.repository.IExtractionMetadataRepositoryService;
 import com.training.service.invoiceextractor.adapter.outbound.database.v1_0.repository.IInvoiceRepositoryService;
 import com.training.service.invoiceextractor.adapter.outbound.llm.v1_0.ILlmExtractionService;
 import com.training.service.invoiceextractor.adapter.outbound.llm.v1_0.InvoiceData;
 import com.training.service.invoiceextractor.adapter.outbound.ocr.v1_0.IOcrService;
 import com.training.service.invoiceextractor.adapter.outbound.ocr.v1_0.OcrResult;
+import com.training.service.invoiceextractor.domain.events.ExtractionEventPublisher;
+import com.training.service.invoiceextractor.domain.factory.ExtractionMetadataFactory;
+import com.training.service.invoiceextractor.domain.factory.InvoiceFactory;
 import com.training.service.invoiceextractor.domain.model.ExtractionMetadataModel;
 import com.training.service.invoiceextractor.domain.model.InvoiceModel;
 import com.training.service.invoiceextractor.utils.error.ErrorCodes;
@@ -15,15 +17,25 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.math.BigDecimal;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Domain service implementation for invoice extraction operations.
  * Orchestrates OCR extraction and invoice creation workflow.
+ *
+ * <p><b>Refactored to use Design Patterns:</b>
+ * <ul>
+ *   <li>Factory Pattern: Uses InvoiceFactory and ExtractionMetadataFactory</li>
+ *   <li>Observer Pattern: Publishes domain events via ExtractionEventPublisher</li>
+ *   <li>Strategy Pattern: Delegates OCR to IOcrService (which uses OcrStrategyContext)</li>
+ * </ul>
+ *
+ * @version 2.0
+ * @since 2025-12-22
  */
 @Service
 @Slf4j
@@ -36,6 +48,13 @@ public class ExtractionService implements IExtractionService {
     private final ILlmExtractionService llmExtractionService;
     private final ExtractionEventPublisher eventPublisher;
 
+    // Design Pattern: Factory Pattern
+    private final InvoiceFactory invoiceFactory;
+    private final ExtractionMetadataFactory extractionMetadataFactory;
+
+    private static final double LOW_CONFIDENCE_THRESHOLD = 0.7;
+    private static final long MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+
     @Override
     public CompletableFuture<ExtractionMetadataModel> extractAndSaveInvoice(
             byte[] fileData,
@@ -45,60 +64,48 @@ public class ExtractionService implements IExtractionService {
         log.debug("Domain: Extracting and saving invoice from file: {}", fileName);
 
         return CompletableFuture.supplyAsync(() -> {
-            // Create initial extraction metadata (declare outside try-catch for access in catch block)
-            ExtractionMetadataModel initialMetadata = ExtractionMetadataModel.createProcessing(fileName);
+            // Factory Pattern: Create initial extraction metadata
+            ExtractionMetadataModel initialMetadata = extractionMetadataFactory.createProcessing(fileName);
 
             try {
-                // Save initial processing state
-                extractionMetadataRepositoryService.save(initialMetadata).join();
+                saveInitialMetadata(initialMetadata);
 
-                // Publish EXTRACTION_STARTED event via WebSocket
+                // Observer Pattern: Publish extraction started event
                 eventPublisher.publishExtractionStarted(initialMetadata.extractionKey(), fileName);
 
-                // Extract text using OCR adapter
-                OcrResult ocrResult = ocrService.extractText(fileData, fileName, fileType).join();
+                // Strategy Pattern: OCR extraction (delegates to OcrStrategyContext)
+                OcrResult ocrResult = performOcrExtraction(fileData, fileName, fileType);
 
-                if (ocrResult.isEmpty()) {
-                    throw new InvoiceExtractorServiceException(
-                            ErrorCodes.EXTRACTION_FAILED,
-                            "OCR extraction returned empty text"
-                    );
-                }
-
-                String extractedText = ocrResult.extractedText();
-
-                // Publish OCR_COMPLETED event via WebSocket
+                // Observer Pattern: Publish OCR completed event
                 eventPublisher.publishOcrCompleted(initialMetadata.extractionKey(), ocrResult);
 
-                // Parse extracted text into invoice data
-                InvoiceModel invoice = parseInvoiceFromText(extractedText, fileName, initialMetadata.extractionKey());
-
-                // Save the invoice
-                InvoiceModel savedInvoice = invoiceRepositoryService.save(invoice).join();
-
-                // Publish INVOICE_SAVED event via WebSocket
-                eventPublisher.publishInvoiceSaved(initialMetadata.extractionKey(), savedInvoice.invoiceKey());
-
-                // Create completed extraction metadata
-                // Wrap text in JSON format for PostgreSQL jsonb column
-                String extractionDataJson = wrapTextAsJson(extractedText);
-
-                ExtractionMetadataModel completedMetadata = ExtractionMetadataModel.createCompleted(
-                        initialMetadata.extractionKey(),
-                        savedInvoice.invoiceKey(),
+                // Factory Pattern: Parse and create invoice from LLM data
+                InvoiceModel invoice = extractInvoiceFromOcrResult(
+                        ocrResult.extractedText(),
                         fileName,
-                        ocrResult.confidenceScore(),
-                        ocrResult.engineVersion(),
-                        extractionDataJson // JSON-formatted extraction data
+                        initialMetadata.extractionKey()
                 );
 
-                // Update completed metadata (don't insert again - use existing extraction_key)
-                ExtractionMetadataModel finalMetadata = extractionMetadataRepositoryService.update(
+                // Save invoice to database
+                InvoiceModel savedInvoice = saveInvoice(invoice);
+
+                // Observer Pattern: Publish invoice saved event
+                eventPublisher.publishInvoiceSaved(initialMetadata.extractionKey(), savedInvoice.invoiceKey());
+
+                // Factory Pattern: Create completed metadata
+                ExtractionMetadataModel completedMetadata = createCompletedMetadata(
+                        initialMetadata,
+                        savedInvoice,
+                        ocrResult
+                );
+
+                // Update metadata in database
+                ExtractionMetadataModel finalMetadata = updateMetadata(
                         initialMetadata.extractionKey(),
                         completedMetadata
-                ).join();
+                );
 
-                // Publish EXTRACTION_COMPLETED event via WebSocket
+                // Observer Pattern: Publish extraction completed event
                 eventPublisher.publishExtractionCompleted(
                         initialMetadata.extractionKey(),
                         savedInvoice.invoiceKey(),
@@ -108,26 +115,222 @@ public class ExtractionService implements IExtractionService {
                 return finalMetadata;
 
             } catch (Exception ex) {
-                log.error("Error during extraction: {}", fileName, ex);
-
-                // Publish EXTRACTION_FAILED event via WebSocket
-                eventPublisher.publishExtractionFailed(initialMetadata.extractionKey(), ex.getMessage());
-
-                // Create failed extraction metadata
-                ExtractionMetadataModel failedMetadata = ExtractionMetadataModel.createFailed(
-                        UUID.randomUUID(),
-                        fileName,
-                        ex.getMessage()
-                );
-
-                extractionMetadataRepositoryService.save(failedMetadata).join();
-
-                throw new InvoiceExtractorServiceException(
-                        ErrorCodes.EXTRACTION_FAILED,
-                        fileName + ": " + ex.getMessage()
-                );
+                return handleExtractionFailure(initialMetadata, fileName, ex);
             }
         });
+    }
+
+    /**
+     * Saves initial extraction metadata to database.
+     * Uses timeout to prevent indefinite blocking.
+     */
+    private void saveInitialMetadata(ExtractionMetadataModel metadata) {
+        try {
+            extractionMetadataRepositoryService.save(metadata).get(30, TimeUnit.SECONDS);
+        } catch (TimeoutException ex) {
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.DATABASE_ERROR,
+                    "Timeout saving initial metadata after 30 seconds",
+                    ex
+            );
+        } catch (Exception ex) {
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.DATABASE_ERROR,
+                    "Failed to save initial metadata: " + ex.getMessage(),
+                    ex
+            );
+        }
+    }
+
+    /**
+     * Performs OCR extraction with validation.
+     * Strategy Pattern: Delegates to IOcrService (which uses OcrStrategyContext).
+     * Uses 60-second timeout for OCR processing.
+     */
+    private OcrResult performOcrExtraction(byte[] fileData, String fileName, String fileType) {
+        OcrResult ocrResult;
+        try {
+            ocrResult = ocrService.extractText(fileData, fileName, fileType).get(60, TimeUnit.SECONDS);
+        } catch (TimeoutException ex) {
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.OCR_TIMEOUT,
+                    "OCR processing timed out after 60 seconds",
+                    ex
+            );
+        } catch (Exception ex) {
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.OCR_SERVICE_UNAVAILABLE,
+                    "OCR extraction failed: " + ex.getMessage(),
+                    ex
+            );
+        }
+
+        if (ocrResult.isEmpty()) {
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.EXTRACTION_FAILED,
+                    "OCR extraction returned empty text"
+            );
+        }
+
+        return ocrResult;
+    }
+
+    /**
+     * Extracts invoice data from OCR text using LLM.
+     * Factory Pattern: Uses InvoiceFactory to create invoice model.
+     * Uses 30-second timeout for LLM API calls.
+     */
+    private InvoiceModel extractInvoiceFromOcrResult(
+            String extractedText,
+            String fileName,
+            UUID extractionKey
+    ) {
+        validateLlmAvailability();
+
+        try {
+            InvoiceData llmData = llmExtractionService.extractInvoiceData(extractedText).get(30, TimeUnit.SECONDS);
+
+            // Observer Pattern: Publish LLM completed event
+            eventPublisher.publishLlmCompleted(extractionKey, llmData);
+
+            validateLlmData(llmData);
+
+            // Factory Pattern: Create invoice from LLM data
+            return invoiceFactory.createFromLlmData(llmData, fileName);
+
+        } catch (Exception ex) {
+            log.error("LLM extraction failed: {}", ex.getMessage());
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.EXTRACTION_FAILED,
+                    "LLM extraction failed: " + ex.getMessage(),
+                    ex
+            );
+        }
+    }
+
+    /**
+     * Validates that LLM service is available.
+     */
+    private void validateLlmAvailability() {
+        if (!llmExtractionService.isAvailable()) {
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.LLM_SERVICE_UNAVAILABLE,
+                    "LLM service is not available for invoice data extraction"
+            );
+        }
+    }
+
+    /**
+     * Validates LLM extracted data.
+     */
+    private void validateLlmData(InvoiceData llmData) {
+        if (!llmData.isValid()) {
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.LLM_INVALID_RESPONSE,
+                    "LLM extraction returned invalid data"
+            );
+        }
+
+        log.info("LLM extraction successful with confidence: {}", llmData.confidence());
+    }
+
+    /**
+     * Saves invoice to database.
+     * Uses timeout to prevent indefinite blocking.
+     */
+    private InvoiceModel saveInvoice(InvoiceModel invoice) {
+        try {
+            return invoiceRepositoryService.save(invoice).get(30, TimeUnit.SECONDS);
+        } catch (TimeoutException ex) {
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.DATABASE_ERROR,
+                    "Timeout saving invoice after 30 seconds",
+                    ex
+            );
+        } catch (Exception ex) {
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.DATABASE_ERROR,
+                    "Failed to save invoice: " + ex.getMessage(),
+                    ex
+            );
+        }
+    }
+
+    /**
+     * Creates completed extraction metadata.
+     * Factory Pattern: Uses ExtractionMetadataFactory.
+     */
+    private ExtractionMetadataModel createCompletedMetadata(
+            ExtractionMetadataModel initialMetadata,
+            InvoiceModel savedInvoice,
+            OcrResult ocrResult
+    ) {
+        return extractionMetadataFactory.createCompleted(
+                initialMetadata.extractionKey(),
+                savedInvoice.invoiceKey(),
+                initialMetadata.sourceFileName(),
+                ocrResult
+        );
+    }
+
+    /**
+     * Updates extraction metadata in database.
+     * Uses timeout to prevent indefinite blocking.
+     */
+    private ExtractionMetadataModel updateMetadata(
+            UUID extractionKey,
+            ExtractionMetadataModel metadata
+    ) {
+        try {
+            return extractionMetadataRepositoryService.update(extractionKey, metadata).get(30, TimeUnit.SECONDS);
+        } catch (TimeoutException ex) {
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.DATABASE_ERROR,
+                    "Timeout updating extraction metadata after 30 seconds",
+                    ex
+            );
+        } catch (Exception ex) {
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.DATABASE_ERROR,
+                    "Failed to update extraction metadata: " + ex.getMessage(),
+                    ex
+            );
+        }
+    }
+
+    /**
+     * Handles extraction failure by creating failed metadata and publishing event.
+     * Factory Pattern: Uses ExtractionMetadataFactory to create failed metadata.
+     */
+    private ExtractionMetadataModel handleExtractionFailure(
+            ExtractionMetadataModel initialMetadata,
+            String fileName,
+            Exception ex
+    ) {
+        log.error("Error during extraction: {}", fileName, ex);
+
+        // Observer Pattern: Publish extraction failed event
+        eventPublisher.publishExtractionFailed(initialMetadata.extractionKey(), ex.getMessage());
+
+        // Factory Pattern: Create failed extraction metadata
+        ExtractionMetadataModel failedMetadata = extractionMetadataFactory.createFailed(
+                initialMetadata.extractionKey(),
+                fileName,
+                ex.getMessage()
+        );
+
+        try {
+            extractionMetadataRepositoryService.save(failedMetadata).get(30, TimeUnit.SECONDS);
+        } catch (Exception saveEx) {
+            log.error("Failed to save failed metadata: {}", saveEx.getMessage());
+            // Don't throw here, we already have an exception to throw
+        }
+
+        throw new InvoiceExtractorServiceException(
+                ErrorCodes.EXTRACTION_FAILED,
+                fileName + ": " + ex.getMessage(),
+                ex
+        );
     }
 
     @Override
@@ -259,92 +462,44 @@ public class ExtractionService implements IExtractionService {
         log.debug("Domain: Validating file: {}", fileName);
 
         return CompletableFuture.supplyAsync(() -> {
-            // Check file size (max 10MB)
+            // Validate file is not empty
             if (fileData == null || fileData.length == 0) {
                 log.warn("File is empty: {}", fileName);
                 return false;
             }
 
-            if (fileData.length > 10 * 1024 * 1024) {
-                log.warn("File too large: {} ({} bytes)", fileName, fileData.length);
+            // Validate file size (max 10MB)
+            if (fileData.length > MAX_FILE_SIZE_BYTES) {
+                log.warn("File too large: {} ({} bytes, max: {} bytes)",
+                        fileName, fileData.length, MAX_FILE_SIZE_BYTES);
                 return false;
             }
 
-            // Check file type
-            if (fileType == null || (!fileType.contains("pdf") && !fileType.contains("image"))) {
-                log.warn("Invalid file type: {} ({})", fileName, fileType);
-                return false;
+            // Validate file type (delegating to OCR service for accuracy)
+            try {
+                Boolean isSupported = ocrService.isFormatSupported(fileType).get(10, TimeUnit.SECONDS);
+                if (!isSupported) {
+                    log.warn("Unsupported file type: {} ({})", fileName, fileType);
+                    return false;
+                }
+            } catch (TimeoutException ex) {
+                log.error("Timeout checking file type support for: {}", fileType, ex);
+                throw new InvoiceExtractorServiceException(
+                        ErrorCodes.OCR_SERVICE_UNAVAILABLE,
+                        "Timeout validating file type after 10 seconds",
+                        ex
+                );
+            } catch (Exception ex) {
+                log.error("Error checking file type support for: {}", fileType, ex);
+                throw new InvoiceExtractorServiceException(
+                        ErrorCodes.INVALID_FILE_TYPE,
+                        "Failed to validate file type: " + ex.getMessage(),
+                        ex
+                );
             }
 
             return true;
         });
     }
 
-    /**
-     * Parse invoice data from extracted text using LLM.
-     * If LLM is not available or fails, throws an exception.
-     */
-    private InvoiceModel parseInvoiceFromText(String extractedText, String fileName, UUID extractionKey) {
-        if (!llmExtractionService.isAvailable()) {
-            throw new InvoiceExtractorServiceException(
-                    ErrorCodes.EXTRACTION_FAILED,
-                    "LLM service is not available for invoice data extraction"
-            );
-        }
-
-        try {
-            log.debug("Using LLM for invoice data extraction");
-            InvoiceData llmData = llmExtractionService.extractInvoiceData(extractedText).join();
-
-            // Publish LLM_EXTRACTION_COMPLETED event via WebSocket
-            eventPublisher.publishLlmCompleted(extractionKey, llmData);
-
-            if (!llmData.isValid()) {
-                throw new InvoiceExtractorServiceException(
-                        ErrorCodes.EXTRACTION_FAILED,
-                        "LLM extraction returned invalid data"
-                );
-            }
-
-            log.info("LLM extraction successful with confidence: {}", llmData.confidence());
-            return InvoiceModel.create(
-                    llmData.invoiceNumber().orElse("UNKNOWN"),
-                    llmData.amount().orElse(BigDecimal.ZERO),
-                    llmData.clientName().orElse("Unknown Client"),
-                    llmData.clientAddress().orElse(null),
-                    llmData.currency(),
-                    InvoiceModel.STATUS_EXTRACTED,
-                    fileName
-            );
-        } catch (Exception ex) {
-            log.error("LLM extraction failed: {}", ex.getMessage());
-            throw new InvoiceExtractorServiceException(
-                    ErrorCodes.EXTRACTION_FAILED,
-                    "LLM extraction failed: " + ex.getMessage()
-            );
-        }
-    }
-
-    /**
-     * Wrap extracted text in JSON format for PostgreSQL jsonb column.
-     * Escapes quotes and newlines to create valid JSON.
-     *
-     * @param text Raw text extracted by OCR
-     * @return JSON string in format: {"text": "escaped content", "length": 123}
-     */
-    private String wrapTextAsJson(String text) {
-        if (text == null) {
-            return "{\"text\":\"\",\"length\":0}";
-        }
-
-        // Escape special JSON characters
-        String escapedText = text
-                .replace("\\", "\\\\")  // Backslash must be first
-                .replace("\"", "\\\"")  // Escape quotes
-                .replace("\n", "\\n")   // Escape newlines
-                .replace("\r", "\\r")   // Escape carriage returns
-                .replace("\t", "\\t");  // Escape tabs
-
-        return String.format("{\"text\":\"%s\",\"length\":%d}", escapedText, text.length());
-    }
 }

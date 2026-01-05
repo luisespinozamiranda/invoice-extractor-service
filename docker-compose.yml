@@ -7,9 +7,9 @@ services:
     image: postgres:15-alpine
     container_name: invoice-postgres
     environment:
-      POSTGRES_DB: invoicedb
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: ${POSTGRES_DB:-invoicedb}
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin}
       POSTGRES_INITDB_ARGS: "--encoding=UTF8"
     ports:
       - "5432:5432"
@@ -34,13 +34,13 @@ services:
     container_name: invoice-extractor-api
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      DATASOURCE_URL: jdbc:postgresql://postgres:5432/invoicedb
-      DATASOURCE_USERNAME: admin
-      DATASOURCE_PASSWORD: admin
+      DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-invoicedb}
+      DATASOURCE_USERNAME: ${POSTGRES_USER:-admin}
+      DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-admin}
       TESSDATA_PREFIX: /usr/share/tesseract-ocr/4.00/tessdata
       UPLOAD_DIRECTORY: /app/uploads
       # Groq LLM Configuration
-      GROQ_API_KEY: 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
+      GROQ_API_KEY: ${GROQ_API_KEY}
       LLM_ENABLED: true
     ports:
       - "8080:8080"
@@ -83,8 +83,8 @@ services:
     image: dpage/pgadmin4:latest
     container_name: invoice-pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@invoiceextractor.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
       PGADMIN_CONFIG_SERVER_MODE: 'False'
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
     ports:

@@ -1,20 +1,31 @@
 package com.training.service.invoiceextractor.adapter.outbound.llm.v1_0.impl;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.training.service.invoiceextractor.adapter.outbound.llm.v1_0.ILlmExtractionService;
 import com.training.service.invoiceextractor.adapter.outbound.llm.v1_0.InvoiceData;
+import com.training.service.invoiceextractor.adapter.outbound.llm.v1_0.dto.GroqChatRequest;
+import com.training.service.invoiceextractor.adapter.outbound.llm.v1_0.dto.GroqChatResponse;
+import com.training.service.invoiceextractor.configuration.GroqProperties;
+import com.training.service.invoiceextractor.utils.error.ErrorCodes;
+import com.training.service.invoiceextractor.utils.error.InvoiceExtractorServiceException;
 
 import lombok.extern.slf4j.Slf4j;
-import okhttp3.*;
 
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
 import java.time.Duration;
-import java.util.Optional;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 
 import org.apache.logging.log4j.util.Strings;
 
@@ -27,237 +38,297 @@ import org.apache.logging.log4j.util.Strings;
 public class GroqLlmService implements ILlmExtractionService {
 
     private static final String GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-    private static final MediaType JSON_MEDIA_TYPE = MediaType.parse("application/json; charset=utf-8");
+    private static final String USER_ROLE = "user";
+    private static final String JSON_OBJECT_TYPE = "json_object";
+    private static final double DEFAULT_CONFIDENCE = 0.85;
 
-    private final OkHttpClient httpClient;
+    private static final String EXTRACTION_PROMPT_TEMPLATE = """
+            You are an expert at extracting structured data from invoices.
+
+            Extract the following fields from the invoice text below:
+            - invoice_number: The invoice or document number
+            - amount: the exact text containing the total amount, exactly as it appears
+            - vendor_name: The vendor name
+            - vendor_address: The vendor address (if available)
+            - currency: (ISO code if possible)
+            - confidence: A decimal number between 0.0 and 1.0 representing your confidence in the extraction quality
+
+            Return ONLY a valid JSON object with these exact field names. No explanations.
+            If a field is not found, use null for strings or 0 for amount.
+
+            Confidence score guidelines:
+            - 0.9-1.0: All fields clearly visible and extracted with high certainty
+            - 0.7-0.89: Most fields found, some minor ambiguity
+            - 0.5-0.69: Several fields missing or unclear
+            - 0.0-0.49: Poor quality text, most fields unclear or missing
+
+            Rules:
+            - DO NOT normalize numbers
+            - DO NOT change separators
+            - DO NOT calculate
+            - Copy values EXACTLY as seen in the text
+            - If multiple totals exist, choose the FINAL payable amount
+
+            Invoice text:
+            %s
+
+            JSON output:
+            """;
+
+    private final WebClient webClient;
     private final ObjectMapper objectMapper;
-    private final String apiKey;
-    private final String model;
+    private final GroqProperties properties;
 
     public GroqLlmService(
-            @Value("${llm.groq.api-key:}") String apiKey,
-            @Value("${llm.groq.model:llama-3.1-70b-versatile}") String model,
-            ObjectMapper objectMapper
+            GroqProperties properties,
+            ObjectMapper objectMapper,
+            WebClient.Builder webClientBuilder
     ) {
-        this.apiKey = apiKey;
-        this.model = model;
+        this.properties = properties;
         this.objectMapper = objectMapper;
-        this.httpClient = new OkHttpClient.Builder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .readTimeout(Duration.ofSeconds(30))
+        this.webClient = webClientBuilder
+                .baseUrl(GROQ_API_URL)
+                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getApiKey())
                 .build();
     }
 
     @Override
     public CompletableFuture<InvoiceData> extractInvoiceData(String ocrText) {
-        if (!isAvailable()) {
-            log.warn("Groq LLM service is not available. Returning default values.");
-            return CompletableFuture.completedFuture(createDefaultInvoiceData());
-        }
+        validateServiceAvailability();
 
         return CompletableFuture.supplyAsync(() -> {
             try {
-                log.debug("Sending OCR text to Groq LLM for extraction");
-                String prompt = buildExtractionPrompt(ocrText);
-                log.debug("prompt: " + prompt);
-                String requestBody = buildRequestBody(prompt);
+                GroqChatRequest request = buildChatRequest(ocrText);
+                GroqChatResponse response = callGroqApi(request);
+                String content = extractContentFromResponse(response);
+                return parseInvoiceJson(content);
 
-                Request request = new Request.Builder()
-                        .url(GROQ_API_URL)
-                        .header("Authorization", "Bearer " + apiKey)
-                        .header("Content-Type", "application/json")
-                        .post(RequestBody.create(requestBody, JSON_MEDIA_TYPE))
-                        .build();
-
-                try (Response response = httpClient.newCall(request).execute()) {
-                    if (!response.isSuccessful()) {
-                        String errorBody = response.body() != null ? response.body().string() : "No error body";
-                        log.error("Groq API error: {} - {} - Body: {}", response.code(), response.message(), errorBody);
-                        return createDefaultInvoiceData();
-                    }
-
-                    String responseBody = response.body().string();
-                    log.debug("Received response from Groq LLM: {}", responseBody);
-                    return parseGroqResponse(responseBody);
-                }
-
+            } catch (InvoiceExtractorServiceException ex) {
+                throw ex;
+            } catch (WebClientResponseException ex) {
+                throw buildApiException(ex);
             } catch (Exception ex) {
-                log.error("Error calling Groq LLM API", ex);
-                return createDefaultInvoiceData();
+                log.error("Unexpected error calling Groq LLM API", ex);
+                throw new InvoiceExtractorServiceException(
+                        ErrorCodes.LLM_API_ERROR,
+                        "Unexpected error calling LLM API: " + ex.getMessage(),
+                        ex
+                );
             }
         });
     }
 
     @Override
     public boolean isAvailable() {
-        return Strings.isNotBlank(apiKey) && Strings.isNotBlank(model);
+        return Strings.isNotBlank(properties.getApiKey()) && Strings.isNotBlank(properties.getModel());
     }
 
     @Override
     public String getProviderName() {
-        return "Groq (" + model + ")";
+        return "Groq (" + properties.getModel() + ")";
     }
 
     /**
-     * Build the extraction prompt for the LLM.
-     * This prompt instructs the model to extract invoice fields in JSON format.
+     * Validates that the LLM service is properly configured and available.
+     * @throws InvoiceExtractorServiceException if service is not available
      */
-    private String buildExtractionPrompt(String ocrText) {
-        return """
-                You are an expert at extracting structured data from invoices.
-
-                Extract the following fields from the invoice text below:
-                - invoice_number: The invoice or document number
-                - amount: the exact text containing the total amount, exactly as it appears
-                - client_name: The customer name
-                - client_address: The customer address (if available)
-                - currency: (ISO code if possible)
-
-                Return ONLY a valid JSON object with these exact field names. No explanations.
-                If a field is not found, use null for strings or 0 for amount.
-
-                Rules:
-                - DO NOT normalize numbers
-                - DO NOT change separators
-                - DO NOT calculate
-                - Copy values EXACTLY as seen in the text
-                - If multiple totals exist, choose the FINAL payable amount
-
-                Invoice text:
-                %s
-
-                JSON output:
-                """.formatted(ocrText);
-    }
-
-    /**
-     * Build the request body for Groq API in OpenAI-compatible format.
-     */
-    private String buildRequestBody(String prompt) {
-        try {
-            var request = new java.util.HashMap<String, Object>();
-            request.put("model", model);
-            request.put("messages", new Object[]{
-                    java.util.Map.of("role", "user", "content", prompt)
-            });
-            request.put("temperature", 0.1); // Low temperature for consistent, factual extraction
-            request.put("max_tokens", 2048);
-            request.put("response_format", java.util.Map.of("type", "json_object")); // Force JSON output
-
-            return objectMapper.writeValueAsString(request);
-        } catch (Exception ex) {
-            log.error("Error building request body", ex);
-            return "{}";
+    private void validateServiceAvailability() {
+        if (!isAvailable()) {
+            throw new InvoiceExtractorServiceException(ErrorCodes.LLM_SERVICE_UNAVAILABLE)
+                    .addDetail("provider", "Groq")
+                    .addDetail("model", properties.getModel());
         }
     }
 
     /**
-     * Parse the Groq API response and extract InvoiceData.
+     * Builds a chat completion request for Groq API.
      */
-    private InvoiceData parseGroqResponse(String responseBody) {
+    private GroqChatRequest buildChatRequest(String ocrText) {
+        String prompt = String.format(EXTRACTION_PROMPT_TEMPLATE, ocrText);
+
+        return GroqChatRequest.builder()
+                .model(properties.getModel())
+                .messages(List.of(
+                        GroqChatRequest.Message.builder()
+                                .role(USER_ROLE)
+                                .content(prompt)
+                                .build()
+                ))
+                .temperature(properties.getTemperature())
+                .maxTokens(properties.getMaxTokens())
+                .responseFormat(Map.of("type", JSON_OBJECT_TYPE))
+                .build();
+    }
+
+    /**
+     * Calls Groq API with the given request and returns the response.
+     */
+    private GroqChatResponse callGroqApi(GroqChatRequest request) {
         try {
-            JsonNode root = objectMapper.readTree(responseBody);
-            JsonNode choices = root.path("choices");
-
-            if (choices.isEmpty()) {
-                log.warn("No choices in Groq response");
-                return createDefaultInvoiceData();
-            }
-
-            String content = choices.get(0)
-                    .path("message")
-                    .path("content")
-                    .asText();
-
-            // Parse the JSON content from LLM
-            return parseInvoiceJson(content);
+            return webClient.post()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(request)
+                    .retrieve()
+                    .onStatus(
+                            status -> !status.is2xxSuccessful(),
+                            response -> response.bodyToMono(String.class)
+                                    .flatMap(errorBody -> Mono.error(
+                                            new InvoiceExtractorServiceException(
+                                                    ErrorCodes.LLM_API_ERROR,
+                                                    "Groq API returned error: " + response.statusCode()
+                                            ).addDetail("statusCode", response.statusCode().value())
+                                             .addDetail("errorBody", errorBody)
+                                    ))
+                    )
+                    .bodyToMono(GroqChatResponse.class)
+                    .timeout(Duration.ofSeconds(properties.getTimeoutSeconds()))
+                    .onErrorMap(TimeoutException.class, e ->
+                            new InvoiceExtractorServiceException(ErrorCodes.LLM_TIMEOUT, e.getMessage(), e)
+                    )
+                    .block();
 
         } catch (Exception ex) {
-            log.error("Error parsing Groq response", ex);
-            return createDefaultInvoiceData();
+            log.error("Error during Groq API call", ex);
+            throw ex;
         }
     }
 
     /**
-     * Parse the JSON string returned by the LLM into InvoiceData.
+     * Extracts the content string from a Groq chat response.
+     */
+    private String extractContentFromResponse(GroqChatResponse response) {
+        if (response == null || response.getChoices() == null || response.getChoices().isEmpty()) {
+            throw new InvoiceExtractorServiceException(ErrorCodes.LLM_INVALID_RESPONSE)
+                    .addDetail("reason", "No choices in response");
+        }
+
+        GroqChatResponse.Choice choice = response.getChoices().get(0);
+        if (choice.getMessage() == null || Strings.isBlank(choice.getMessage().getContent())) {
+            throw new InvoiceExtractorServiceException(ErrorCodes.LLM_INVALID_RESPONSE)
+                    .addDetail("reason", "Empty content in message");
+        }
+
+        return choice.getMessage().getContent();
+    }
+
+    /**
+     * Parses the JSON string returned by the LLM into InvoiceData.
      */
     private InvoiceData parseInvoiceJson(String jsonContent) {
         try {
-            // Clean up the response (remove markdown code blocks if present)
-            String cleanedJson = jsonContent
-                    .replaceAll("```json\\s*", "")
-                    .replaceAll("```\\s*", "")
-                    .trim();
-
+            String cleanedJson = cleanJsonResponse(jsonContent);
             JsonNode invoiceJson = objectMapper.readTree(cleanedJson);
 
-            // Extract fields - keep NULL if not found (don't use defaults)
-            String invoiceNumber = getStringOrNull(invoiceJson.path("invoice_number"));
-            String clientName = getStringOrNull(invoiceJson.path("client_name"));
-            String clientAddress = getStringOrNull(invoiceJson.path("client_address"));
-            String currency = getStringOrNull(invoiceJson.path("currency"));
-
-            // Parse amount - keep NULL if not found or invalid
-            BigDecimal amount = null;
-            JsonNode amountNode = invoiceJson.path("amount");
-            if (!amountNode.isMissingNode() && !amountNode.isNull()) {
-                try {
-                    String amountStr = amountNode.asText();
-                    // Clean amount string (remove commas, currency symbols, spaces)
-                    String cleanedAmount = amountStr.replaceAll("[^0-9.]", "");
-                    if (!cleanedAmount.isEmpty()) {
-                        amount = new BigDecimal(cleanedAmount);
-                    }
-                } catch (Exception ex) {
-                    log.warn("Failed to parse amount from LLM response: {}", amountNode.asText());
-                }
-            }
-
-            // High confidence since LLM understands context better than regex
-            double confidence = 0.85;
+            String invoiceNumber = extractStringField(invoiceJson, "invoice_number");
+            String vendorName = extractStringField(invoiceJson, "vendor_name");
+            String vendorAddress = extractStringField(invoiceJson, "vendor_address");
+            String currency = extractStringField(invoiceJson, "currency");
+            BigDecimal amount = extractAmountField(invoiceJson, "amount");
+            double confidence = extractConfidenceField(invoiceJson, "confidence");
 
             return InvoiceData.create(
                     invoiceNumber,
                     amount,
-                    clientName,
-                    clientAddress,
+                    vendorName,
+                    vendorAddress,
                     currency,
                     confidence
             );
 
-        } catch (Exception ex) {
-            log.error("Error parsing invoice JSON from LLM", ex);
-            return createDefaultInvoiceData();
+        } catch (JsonProcessingException ex) {
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.LLM_INVALID_RESPONSE,
+                    "Failed to parse invoice data from LLM JSON: " + ex.getMessage(),
+                    ex
+            ).addDetail("jsonContent", jsonContent);
         }
     }
 
     /**
-     * Create default invoice data when LLM extraction fails completely.
-     * Returns empty Optionals to indicate extraction failure.
+     * Cleans JSON response by removing markdown code blocks.
      */
-    private InvoiceData createDefaultInvoiceData() {
-        return new InvoiceData(
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty(),
-                "USD",
-                0.0
-        );
+    private String cleanJsonResponse(String jsonContent) {
+        return jsonContent
+                .replaceAll("```json\\s*", "")
+                .replaceAll("```\\s*", "")
+                .trim();
     }
 
     /**
-     * Helper method to safely extract string from JsonNode, returning null if not found or empty.
+     * Extracts a string field from JSON, returning null if not found or empty.
      */
-    private String getStringOrNull(JsonNode node) {
-        if (node == null || node.isMissingNode() || node.isNull()) {
+    private String extractStringField(JsonNode node, String fieldName) {
+        JsonNode fieldNode = node.path(fieldName);
+        if (fieldNode.isMissingNode() || fieldNode.isNull()) {
             return null;
         }
-        String value = node.asText();
-        // Return null if empty, "null" string, or whitespace only
+
+        String value = fieldNode.asText();
         if (value == null || value.isBlank() || value.equalsIgnoreCase("null")) {
             return null;
         }
+
         return value.trim();
+    }
+
+    /**
+     * Extracts an amount field from JSON, returning null if not found or invalid.
+     */
+    private BigDecimal extractAmountField(JsonNode node, String fieldName) {
+        JsonNode amountNode = node.path(fieldName);
+        if (amountNode.isMissingNode() || amountNode.isNull()) {
+            return null;
+        }
+
+        try {
+            String amountStr = amountNode.asText();
+            String cleanedAmount = amountStr.replaceAll("[^0-9.]", "");
+            return cleanedAmount.isEmpty() ? null : new BigDecimal(cleanedAmount);
+        } catch (Exception ex) {
+            log.warn("Failed to parse amount: {}", amountNode.asText());
+            return null;
+        }
+    }
+
+    /**
+     * Extracts a confidence field from JSON, returning DEFAULT_CONFIDENCE if not found or invalid.
+     * Validates that the confidence value is between 0.0 and 1.0.
+     */
+    private double extractConfidenceField(JsonNode node, String fieldName) {
+        JsonNode confidenceNode = node.path(fieldName);
+        if (confidenceNode.isMissingNode() || confidenceNode.isNull()) {
+            log.debug("Confidence field not found in LLM response, using default: {}", DEFAULT_CONFIDENCE);
+            return DEFAULT_CONFIDENCE;
+        }
+
+        try {
+            double confidence = confidenceNode.asDouble();
+
+            // Validate confidence is within valid range [0.0, 1.0]
+            if (confidence < 0.0 || confidence > 1.0) {
+                log.warn("Invalid confidence value {} outside range [0.0, 1.0], using default: {}",
+                        confidence, DEFAULT_CONFIDENCE);
+                return DEFAULT_CONFIDENCE;
+            }
+
+            return confidence;
+        } catch (Exception ex) {
+            log.warn("Failed to parse confidence: {}, using default: {}",
+                    confidenceNode.asText(), DEFAULT_CONFIDENCE);
+            return DEFAULT_CONFIDENCE;
+        }
+    }
+
+    /**
+     * Builds an InvoiceExtractorServiceException from a WebClientResponseException.
+     */
+    private InvoiceExtractorServiceException buildApiException(WebClientResponseException ex) {
+        return new InvoiceExtractorServiceException(
+                ErrorCodes.LLM_API_ERROR,
+                "HTTP error calling LLM API: " + ex.getStatusCode(),
+                ex
+        ).addDetail("statusCode", ex.getStatusCode().value())
+         .addDetail("responseBody", ex.getResponseBodyAsString());
     }
 }

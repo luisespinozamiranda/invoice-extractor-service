@@ -1,10 +1,10 @@
-package com.training.service.invoiceextractor.adapter.outbound.ocr.v1_0.impl;
+package com.training.service.invoiceextractor.adapter.outbound.ocr.v1_0.strategy;
 
-import com.training.service.invoiceextractor.adapter.outbound.ocr.v1_0.IOcrService;
 import com.training.service.invoiceextractor.adapter.outbound.ocr.v1_0.OcrResult;
 import com.training.service.invoiceextractor.configuration.TesseractProperties;
 import com.training.service.invoiceextractor.utils.error.ErrorCodes;
 import com.training.service.invoiceextractor.utils.error.InvoiceExtractorServiceException;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.sourceforge.tess4j.ITesseract;
 import net.sourceforge.tess4j.Tesseract;
@@ -12,7 +12,7 @@ import net.sourceforge.tess4j.TesseractException;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 
 import javax.imageio.ImageIO;
 import java.awt.Graphics2D;
@@ -24,12 +24,20 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Tesseract OCR service implementation.
- * Adapter implementation for extracting text from PDF and image files using Tesseract OCR engine.
+ * Tesseract OCR strategy implementation.
+ * Implements the Strategy pattern for OCR operations using Tesseract engine.
+ *
+ * <p><b>Design Pattern:</b> Strategy Pattern (Concrete Strategy)
+ * <p><b>Architecture:</b> Outbound Adapter (Hexagonal Architecture)
+ *
+ * @author Luis Espinoza
+ * @version 1.0
+ * @since 2025-12-22
  */
-@Service
+@Component
 @Slf4j
-public class TesseractOcrService implements IOcrService {
+@RequiredArgsConstructor
+public class TesseractOcrStrategy implements OcrStrategy {
 
     private static final String ENGINE_NAME = "Tesseract";
     private static final List<String> SUPPORTED_IMAGE_TYPES = List.of(
@@ -48,10 +56,6 @@ public class TesseractOcrService implements IOcrService {
     private static final int GRAYSCALE_MASK = 0xFF;          // Mask to extract grayscale value
 
     private final TesseractProperties properties;
-
-    public TesseractOcrService(TesseractProperties properties) {
-        this.properties = properties;
-    }
 
     @Override
     public CompletableFuture<OcrResult> extractText(byte[] fileData, String fileName, String fileType) {
@@ -85,10 +89,8 @@ public class TesseractOcrService implements IOcrService {
     }
 
     @Override
-    public CompletableFuture<Boolean> isFormatSupported(String fileType) {
-        return CompletableFuture.completedFuture(
-                PDF_TYPE.equalsIgnoreCase(fileType) || isSupportedImageType(fileType)
-        );
+    public boolean supports(String fileType) {
+        return PDF_TYPE.equalsIgnoreCase(fileType) || isSupportedImageType(fileType);
     }
 
     @Override
@@ -96,16 +98,15 @@ public class TesseractOcrService implements IOcrService {
         return ENGINE_NAME + " " + detectTesseractVersion();
     }
 
-    /**
-     * Check if the file type is a supported image format.
-     */
+    @Override
+    public int getPriority() {
+        return 10; // Default priority
+    }
+
     private boolean isSupportedImageType(String fileType) {
         return SUPPORTED_IMAGE_TYPES.stream().anyMatch(type -> type.equalsIgnoreCase(fileType));
     }
 
-    /**
-     * Create and configure Tesseract instance with optimized settings.
-     */
     private ITesseract createTesseractInstance() {
         ITesseract tesseract = new Tesseract();
         tesseract.setDatapath(properties.getDatapath());
@@ -122,9 +123,6 @@ public class TesseractOcrService implements IOcrService {
         return tesseract;
     }
 
-    /**
-     * Extract text from image file with optional preprocessing.
-     */
     private OcrResult extractFromImage(ITesseract tesseract, byte[] imageData, String fileName, long startTime) {
         try {
             BufferedImage image = readImage(imageData, fileName);
@@ -133,7 +131,7 @@ public class TesseractOcrService implements IOcrService {
                 image = enhanceImageForOcr(image);
             }
 
-            String extractedText = tesseract.doOCR(image);
+            String extractedText = performOcr(tesseract, image, fileName);
             double confidence = calculateConfidence(extractedText);
             long processingTime = System.currentTimeMillis() - startTime;
 
@@ -147,15 +145,20 @@ public class TesseractOcrService implements IOcrService {
             );
 
         } catch (TesseractException ex) {
-            throw handleTesseractException(ex);
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.EXTRACTION_FAILED,
+                    "Tesseract OCR failed: " + ex.getMessage(),
+                    ex
+            );
         } catch (IOException ex) {
-            throw handleIOException(ex, "image");
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.INVALID_FILE_FORMAT,
+                    "Invalid image format: " + ex.getMessage(),
+                    ex
+            );
         }
     }
 
-    /**
-     * Extract text from PDF file by converting pages to images.
-     */
     private OcrResult extractFromPdf(ITesseract tesseract, byte[] pdfData, String fileName, long startTime) {
         try (PDDocument document = Loader.loadPDF(pdfData)) {
             int pageCount = document.getNumberOfPages();
@@ -171,7 +174,7 @@ public class TesseractOcrService implements IOcrService {
                     pageImage = enhanceImageForOcr(pageImage);
                 }
 
-                String pageText = tesseract.doOCR(pageImage);
+                String pageText = performOcr(tesseract, pageImage, fileName);
                 appendPageText(allText, pageText, pageIndex, pageCount);
                 pageConfidences.add(calculateConfidence(pageText));
             }
@@ -189,44 +192,20 @@ public class TesseractOcrService implements IOcrService {
             );
 
         } catch (TesseractException ex) {
-            throw handleTesseractException(ex);
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.EXTRACTION_FAILED,
+                    "Tesseract OCR failed: " + ex.getMessage(),
+                    ex
+            );
         } catch (IOException ex) {
-            throw handleIOException(ex, "PDF");
+            throw new InvoiceExtractorServiceException(
+                    ErrorCodes.INVALID_FILE_FORMAT,
+                    "Invalid PDF format: " + ex.getMessage(),
+                    ex
+            );
         }
     }
 
-    /**
-     * Handles TesseractException by wrapping it in InvoiceExtractorServiceException.
-     *
-     * @param ex TesseractException that occurred
-     * @return InvoiceExtractorServiceException with appropriate error code
-     */
-    private InvoiceExtractorServiceException handleTesseractException(TesseractException ex) {
-        return new InvoiceExtractorServiceException(
-                ErrorCodes.EXTRACTION_FAILED,
-                "Tesseract OCR failed: " + ex.getMessage(),
-                ex
-        );
-    }
-
-    /**
-     * Handles IOException by wrapping it in InvoiceExtractorServiceException.
-     *
-     * @param ex IOException that occurred
-     * @param fileTypeContext Context describing the file type (e.g., "image", "PDF")
-     * @return InvoiceExtractorServiceException with appropriate error code
-     */
-    private InvoiceExtractorServiceException handleIOException(IOException ex, String fileTypeContext) {
-        return new InvoiceExtractorServiceException(
-                ErrorCodes.INVALID_FILE_FORMAT,
-                String.format("Invalid %s format: %s", fileTypeContext, ex.getMessage()),
-                ex
-        );
-    }
-
-    /**
-     * Read image from byte array.
-     */
     private BufferedImage readImage(byte[] imageData, String fileName) throws IOException {
         BufferedImage image = ImageIO.read(new ByteArrayInputStream(imageData));
 
@@ -240,16 +219,14 @@ public class TesseractOcrService implements IOcrService {
         return image;
     }
 
-    /**
-     * Render a PDF page to an image.
-     */
+    private String performOcr(ITesseract tesseract, BufferedImage image, String fileName) throws TesseractException {
+        return tesseract.doOCR(image);
+    }
+
     private BufferedImage renderPdfPage(PDFRenderer renderer, int pageIndex) throws IOException {
         return renderer.renderImageWithDPI(pageIndex, properties.getDpi());
     }
 
-    /**
-     * Append page text to the complete document text.
-     */
     private void appendPageText(StringBuilder allText, String pageText, int pageIndex, int totalPages) {
         allText.append(pageText);
         if (pageIndex < totalPages - 1) {
@@ -257,9 +234,6 @@ public class TesseractOcrService implements IOcrService {
         }
     }
 
-    /**
-     * Calculate average confidence from a list of page confidences.
-     */
     private double calculateAverageConfidence(List<Double> confidences) {
         return confidences.stream()
                 .mapToDouble(Double::doubleValue)
@@ -267,9 +241,6 @@ public class TesseractOcrService implements IOcrService {
                 .orElse(0.0);
     }
 
-    /**
-     * Calculate confidence score based on text quality heuristics.
-     */
     private double calculateConfidence(String text) {
         if (text == null || text.isBlank()) {
             return 0.0;
@@ -289,9 +260,6 @@ public class TesseractOcrService implements IOcrService {
         return Math.max(0.0, Math.min(1.0, score));
     }
 
-    /**
-     * Calculate ratio of special characters in text.
-     */
     private double calculateSpecialCharRatio(String text) {
         long specialCharCount = text.chars()
                 .filter(c -> !Character.isLetterOrDigit(c) && !Character.isWhitespace(c))
@@ -299,18 +267,12 @@ public class TesseractOcrService implements IOcrService {
         return (double) specialCharCount / text.length();
     }
 
-    /**
-     * Enhance image quality for better OCR results.
-     */
     private BufferedImage enhanceImageForOcr(BufferedImage original) {
         BufferedImage grayscale = convertToGrayscale(original);
         int threshold = calculateOtsuThreshold(grayscale);
         return applyBinarization(grayscale, threshold);
     }
 
-    /**
-     * Convert image to grayscale.
-     */
     private BufferedImage convertToGrayscale(BufferedImage original) {
         int width = original.getWidth();
         int height = original.getHeight();
@@ -323,9 +285,6 @@ public class TesseractOcrService implements IOcrService {
         return grayscale;
     }
 
-    /**
-     * Apply binarization to image based on threshold.
-     */
     private BufferedImage applyBinarization(BufferedImage grayscale, int threshold) {
         int width = grayscale.getWidth();
         int height = grayscale.getHeight();
@@ -396,9 +355,6 @@ public class TesseractOcrService implements IOcrService {
         return optimalThreshold;
     }
 
-    /**
-     * Build histogram of pixel intensities.
-     */
     private int[] buildHistogram(BufferedImage image) {
         int[] histogram = new int[HISTOGRAM_SIZE];
         int imageWidth = image.getWidth();
@@ -414,9 +370,6 @@ public class TesseractOcrService implements IOcrService {
         return histogram;
     }
 
-    /**
-     * Calculate weighted sum of histogram.
-     */
     private double calculateHistogramSum(int[] histogram) {
         double sum = 0;
         for (int i = 0; i < HISTOGRAM_SIZE; i++) {
@@ -425,9 +378,6 @@ public class TesseractOcrService implements IOcrService {
         return sum;
     }
 
-    /**
-     * Detect Tesseract version from system.
-     */
     private String detectTesseractVersion() {
         try {
             ProcessBuilder processBuilder = new ProcessBuilder("tesseract", "--version");

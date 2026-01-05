@@ -2,7 +2,6 @@ package com.training.service.invoiceextractor.configuration;
 
 import com.training.service.invoiceextractor.adapter.outbound.llm.v1_0.ILlmExtractionService;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 
 import jakarta.annotation.PostConstruct;
@@ -16,19 +15,19 @@ import jakarta.annotation.PostConstruct;
 public class LlmConfiguration {
 
     private final ILlmExtractionService llmExtractionService;
-    private final boolean llmEnabled;
+    private final GroqProperties groqProperties;
 
     public LlmConfiguration(
             ILlmExtractionService llmExtractionService,
-            @Value("${llm.groq.enabled:false}") boolean llmEnabled
+            GroqProperties groqProperties
     ) {
         this.llmExtractionService = llmExtractionService;
-        this.llmEnabled = llmEnabled;
+        this.groqProperties = groqProperties;
     }
 
     @PostConstruct
     public void validateConfiguration() {
-        if (llmEnabled) {
+        if (groqProperties.isEnabled()) {
             if (llmExtractionService.isAvailable()) {
                 log.info("✓ LLM extraction service is enabled and available: {}",
                         llmExtractionService.getProviderName());

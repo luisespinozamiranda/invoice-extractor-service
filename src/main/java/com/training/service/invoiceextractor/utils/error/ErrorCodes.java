@@ -27,6 +27,13 @@ public enum ErrorCodes {
     EXTRACTION_FAILED("INV-005", "Failed to extract invoice data from file", HttpStatus.INTERNAL_SERVER_ERROR),
     OCR_TIMEOUT("INV-006", "OCR processing timed out after 30 seconds", HttpStatus.REQUEST_TIMEOUT),
 
+    // LLM errors
+    LLM_SERVICE_UNAVAILABLE("INV-016", "LLM service is not available or not configured", HttpStatus.SERVICE_UNAVAILABLE),
+    LLM_API_ERROR("INV-017", "LLM API returned an error: {error}", HttpStatus.BAD_GATEWAY),
+    LLM_TIMEOUT("INV-018", "LLM processing timed out", HttpStatus.REQUEST_TIMEOUT),
+    LLM_INVALID_RESPONSE("INV-019", "LLM returned an invalid or unparseable response", HttpStatus.INTERNAL_SERVER_ERROR),
+    LLM_REQUEST_BUILD_ERROR("INV-020", "Failed to build LLM request", HttpStatus.INTERNAL_SERVER_ERROR),
+
     // Data errors (404 Not Found)
     INVOICE_NOT_FOUND("INV-007", "Invoice not found with the provided key", HttpStatus.NOT_FOUND),
     VENDOR_NOT_FOUND("INV-008", "Vendor not found with the provided key", HttpStatus.NOT_FOUND),

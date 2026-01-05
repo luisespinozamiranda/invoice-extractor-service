@@ -72,6 +72,21 @@ Fields use `Optional<T>` pattern - returns `null` when extraction is not possibl
 ### Prerequisites
 - Docker Desktop or Docker Engine 20.10+
 - Docker Compose 2.0+
+- Groq API Key ([Get yours free at console.groq.com](https://console.groq.com/keys))
+
+### Setup Environment Variables
+
+1. **Copy the example environment file:**
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Edit `.env` and add your Groq API key:**
+   ```bash
+   GROQ_API_KEY=your_actual_api_key_here
+   ```
+
+   Get your free API key at: https://console.groq.com/keys
 
 ### Run with Docker Compose
 
