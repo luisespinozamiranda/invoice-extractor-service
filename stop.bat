@@ -1,20 +1,20 @@
 @echo off
 echo ========================================
-echo  Invoice Extractor - Detener Servicios
+echo  Invoice Extractor - Stop Services
 echo ========================================
 echo.
-echo Deteniendo servicios de Docker Compose...
+echo Stopping Docker Compose services...
 echo.
 
 docker-compose down
 
 echo.
 echo ========================================
-echo  Servicios detenidos!
+echo  Services stopped!
 echo ========================================
 echo.
-echo Los datos se han conservado.
-echo Para iniciar nuevamente: start.bat
+echo Data has been preserved.
+echo To start again: start.bat
 echo.
-echo Presiona cualquier tecla para salir...
+echo Press any key to exit...
 pause > nul

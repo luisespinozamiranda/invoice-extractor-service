@@ -1,10 +1,10 @@
 #!/bin/bash
 
 echo "========================================"
-echo " Invoice Extractor - Inicio Rápido"
+echo " Invoice Extractor - Quick Start"
 echo "========================================"
 echo ""
-echo "Iniciando servicios de Docker Compose..."
+echo "Starting Docker Compose services..."
 echo "- PostgreSQL"
 echo "- Backend (Spring Boot + Tesseract OCR)"
 echo "- Frontend (Angular + Nginx)"
@@ -14,24 +14,24 @@ docker-compose up -d
 
 echo ""
 echo "========================================"
-echo " Servicios iniciados!"
+echo " Services started!"
 echo "========================================"
 echo ""
-echo "Espera unos 30-60 segundos para que todo esté listo..."
+echo "Wait about 30-60 seconds for everything to be ready..."
 echo ""
-echo "URLs de acceso:"
+echo "Access URLs:"
 echo "  Frontend:   http://localhost"
 echo "  Backend:    http://localhost:8080/invoice-extractor-service"
 echo "  Swagger UI: http://localhost:8080/invoice-extractor-service/swagger-ui.html"
 echo ""
-echo "Para ver los logs: docker-compose logs -f"
-echo "Para detener:     docker-compose down"
+echo "To view logs: docker-compose logs -f"
+echo "To stop:      docker-compose down"
 echo ""
-echo "Estado de los servicios:"
+echo "Services status:"
 echo ""
 
 sleep 3
 docker-compose ps
 
 echo ""
-echo "Listo! Puedes acceder a http://localhost"
+echo "Ready! You can access http://localhost"
